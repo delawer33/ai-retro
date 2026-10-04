@@ -65,7 +65,8 @@ def scan(
                 .distinct()
             )
         }
-        fresh = [c for c in conversations if c.id not in known]
+        in_window = {d.conversation_id for d in drafts}
+        fresh = [c for c in conversations if c.id in in_window and c.id not in known]
         domains: dict[str, str | None] = {**known}
         domains |= assign_domains(fresh, domain_rules or [], domain_call, threads=threads)
         for draft in drafts:
