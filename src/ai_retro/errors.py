@@ -44,3 +44,8 @@ class InvalidDomainRulesError(AiRetroError):
             f"Не понимаю правило области {part!r} в AI_RETRO_DOMAIN_RULES: "
             "ожидается «префикс=область», правила через «;», область из списка в CONTEXT.md."
         )
+
+
+class EmptyGoldSetError(AiRetroError):
+    def __init__(self, split: str) -> None:
+        super().__init__(f"В эталоне нет эпизодов ({split}). Разметь их командой `ai-retro label`.")

@@ -72,3 +72,16 @@ def _extract_payload(stdout: str) -> str:
         if isinstance(envelope.get("result"), str):
             return str(envelope["result"])
     raise ModelCallError("В ответе `claude` нет структурированного результата.")
+
+
+def claude_version() -> str:
+    """Версия `claude` для записи прогона evals (ADR 0002)."""
+    if shutil.which("claude") is None:
+        raise ClaudeNotFoundError
+    try:
+        proc = subprocess.run(
+            ["claude", "--version"], capture_output=True, text=True, timeout=30, check=False
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ModelCallError("`claude --version` завис: превышено время ожидания.") from exc
+    return proc.stdout.strip() or "unknown"
