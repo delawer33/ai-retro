@@ -45,6 +45,7 @@ def _parse_line(line: str, source: Path) -> Record | None:
         kind=kind,
         text=_user_text(raw) if kind == "user" else None,
         source=source,
+        assistant_text=_assistant_text(raw) if kind == "assistant" else None,
     )
 
 
@@ -64,3 +65,17 @@ def _user_text(raw: dict[str, Any]) -> str | None:
     if not isinstance(content, str) or not content.strip():
         return None
     return content
+
+
+def _assistant_text(raw: dict[str, Any]) -> str | None:
+    content = (raw.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content or None
+    if not isinstance(content, list):
+        return None
+    parts = [
+        b["text"]
+        for b in content
+        if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)
+    ]
+    return "\n".join(parts) or None

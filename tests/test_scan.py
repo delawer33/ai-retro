@@ -40,9 +40,9 @@ def test_classify_rejects_bad_answer() -> None:
 
 def test_scan_is_idempotent(engine: Engine, logs_dir: Path) -> None:
     model = FakeModel()
-    first = scan(engine, model, logs_dir=logs_dir, since=None, threads=2)
+    first = scan(engine, model, logs_dir=logs_dir, since=None, threads=2, classifier_version="v")
     assert (first.found, first.classified) == (2, 2)
-    second = scan(engine, model, logs_dir=logs_dir, since=None, threads=2)
+    second = scan(engine, model, logs_dir=logs_dir, since=None, threads=2, classifier_version="v")
     assert (second.found, second.classified) == (2, 0)
     assert len(model.calls) == 2
     assert _count(engine, EpisodeRow) == 2
@@ -51,7 +51,9 @@ def test_scan_is_idempotent(engine: Engine, logs_dir: Path) -> None:
 
 def test_scan_since_filters(engine: Engine, logs_dir: Path) -> None:
     since = datetime(2026, 9, 25, 11, 0, 30, tzinfo=UTC)
-    result = scan(engine, FakeModel(), logs_dir=logs_dir, since=since, threads=1)
+    result = scan(
+        engine, FakeModel(), logs_dir=logs_dir, since=since, threads=1, classifier_version="v"
+    )
     assert result.found == 1
 
 

@@ -10,3 +10,4 @@ class Settings(BaseSettings):
     db_path: Path = Path.home() / ".local" / "share" / "ai-retro" / "ai-retro.db"
     model: str = "haiku"
     threads: int = 3
+    context_chars: int = 2000

@@ -3,7 +3,7 @@ from typing import Annotated
 
 import typer
 
-from ai_retro.classify.service import JSON_SCHEMA, SYSTEM_PROMPT
+from ai_retro.classify.service import JSON_SCHEMA, SYSTEM_PROMPT, classifier_version
 from ai_retro.config import Settings
 from ai_retro.db.session import make_engine, migrate
 from ai_retro.errors import AiRetroError
@@ -32,7 +32,14 @@ def scan_command(
         engine = make_engine(settings.db_path)
         migrate(engine)
         result = scan(
-            engine, call, logs_dir=settings.logs_dir, since=since_dt, threads=settings.threads
+            engine,
+            call,
+            logs_dir=settings.logs_dir,
+            since=since_dt,
+            threads=settings.threads,
+            classifier_version=classifier_version(settings.model),
+            context_chars=settings.context_chars,
+            announce=lambda n: typer.echo(f"Эпизодов к классификации (уйдёт в модель): {n}"),
         )
     except AiRetroError as exc:
         typer.echo(f"Ошибка: {exc}", err=True)

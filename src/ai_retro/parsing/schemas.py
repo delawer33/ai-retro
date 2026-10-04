@@ -15,6 +15,7 @@ class Record:
     kind: str  # "user" | "assistant" | другое
     text: str | None  # то, что написал пользователь; None для всего остального
     source: Path
+    assistant_text: str | None = None  # текстовые блоки ответа агента
 
 
 @dataclass(frozen=True)

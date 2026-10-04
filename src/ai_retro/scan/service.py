@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -6,13 +7,19 @@ from pathlib import Path
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from ai_retro.classify.service import CLASSIFIER_VERSION, LOOP_MARKER, classify_many
+from ai_retro.classify.service import (
+    LOOP_MARKER,
+    EpisodeInput,
+    build_prompt,
+    classify_many,
+)
 from ai_retro.db.models import ClassificationRow, EpisodeRow
 from ai_retro.errors import InvalidSinceError, LogsDirNotFoundError
 from ai_retro.llm import ModelCall
 from ai_retro.parsing.conversations import records_to_conversations
 from ai_retro.parsing.episodes import conversations_to_episodes
 from ai_retro.parsing.files import files_to_records, find_log_files
+from ai_retro.parsing.schemas import EpisodeDraft
 
 BATCH_SIZE = 20
 _UNITS = {"h": timedelta(hours=1), "d": timedelta(days=1), "w": timedelta(weeks=1)}
@@ -38,6 +45,9 @@ def scan(
     logs_dir: Path,
     since: datetime | None,
     threads: int,
+    classifier_version: str,
+    context_chars: int = 2000,
+    announce: Callable[[int], None] | None = None,
 ) -> ScanResult:
     if not logs_dir.is_dir():
         raise LogsDirNotFoundError(logs_dir)
@@ -71,23 +81,43 @@ def scan(
         done = set(
             session.scalars(
                 select(ClassificationRow.episode_uuid).where(
-                    ClassificationRow.classifier_version == CLASSIFIER_VERSION
+                    ClassificationRow.classifier_version == classifier_version
                 )
             )
         )
-        todo = [(d.uuid, d.text) for d in drafts if d.uuid not in done]
+        todo = [d for d in drafts if d.uuid not in done]
+        if announce is not None:
+            announce(len(todo))
         classified = 0
         for start in range(0, len(todo), BATCH_SIZE):
-            batch = todo[start : start + BATCH_SIZE]
-            for uuid, result in classify_many(call, batch, threads=threads).items():
+            batch = [
+                (d.uuid, build_prompt(_episode_input(d), context_chars=context_chars))
+                for d in todo[start : start + BATCH_SIZE]
+            ]
+            outcome = classify_many(call, batch, threads=threads)
+            for uuid, result in outcome.results.items():
                 session.add(
                     ClassificationRow(
                         episode_uuid=uuid,
                         category=result.category,
                         gist=result.gist,
-                        classifier_version=CLASSIFIER_VERSION,
+                        classifier_version=classifier_version,
                     )
                 )
                 classified += 1
             session.commit()
+            if outcome.error is not None:
+                raise outcome.error
     return ScanResult(found=len(drafts), classified=classified)
+
+
+def _episode_input(draft: EpisodeDraft) -> EpisodeInput:
+    # Для rewind joint «записи → эпизоды» кладёт в context начало брошенной ветки,
+    # иначе — последний ответ агента перед репликой.
+    rewind = "rewind" in draft.signals
+    return EpisodeInput(
+        text=draft.text,
+        signals=draft.signals,
+        agent_reply=None if rewind else draft.context,
+        abandoned_branch=draft.context if rewind else None,
+    )
