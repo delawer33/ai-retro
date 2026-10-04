@@ -23,6 +23,11 @@ class Metrics:
     confusion: dict[Pair, int]
     classes: dict[str, ClassMetrics]
 
+    @property
+    def agreement(self) -> float | None:
+        """Доля совпавших пар; для потолка: первая и повторная метка человека."""
+        return _ratio(sum(c for (a, b), c in self.confusion.items() if a == b), self.n)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "n": self.n,
@@ -57,11 +62,6 @@ def compute_metrics(pairs: Sequence[Pair], categories: Sequence[str]) -> Metrics
             predicted=predicted,
         )
     return Metrics(n=len(pairs), confusion=dict(confusion), classes=classes)
-
-
-def agreement(pairs: Sequence[Pair]) -> float | None:
-    """Доля совпавших пар; для потолка: первая и повторная метка человека."""
-    return _ratio(sum(1 for a, b in pairs if a == b), len(pairs))
 
 
 def class_deltas(

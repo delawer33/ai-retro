@@ -12,7 +12,7 @@ from ai_retro.db.models import ClassificationRow, EpisodeRow, EvalRunRow, GoldLa
 from ai_retro.errors import EmptyGoldSetError
 from ai_retro.evals.baseline import baseline_category
 from ai_retro.evals.criteria import Check, stop_criteria
-from ai_retro.evals.metrics import Metrics, Pair, agreement, class_deltas, compute_metrics
+from ai_retro.evals.metrics import Metrics, Pair, class_deltas, compute_metrics
 from ai_retro.llm import ModelCall
 
 DEV = "dev"
@@ -134,7 +134,8 @@ def run_eval(
         ceiling_pairs = _ceiling_pairs(session)
         model_metrics = compute_metrics(model_pairs, CATEGORIES)
         baseline_metrics = compute_metrics(baseline_pairs, CATEGORIES)
-        ceiling = agreement(ceiling_pairs)
+        ceiling_metrics = compute_metrics(ceiling_pairs, CATEGORIES)
+        ceiling = ceiling_metrics.agreement
 
         previous = session.scalars(
             select(EvalRunRow).where(EvalRunRow.split == split).order_by(EvalRunRow.id.desc())
@@ -148,7 +149,7 @@ def run_eval(
         record: dict[str, Any] = {
             "model": model_metrics.to_dict(),
             "baseline": baseline_metrics.to_dict(),
-            "ceiling": {"agreement": ceiling, "n": len(ceiling_pairs)},
+            "ceiling": {"agreement": ceiling, "n": len(ceiling_pairs), **ceiling_metrics.to_dict()},
         }
         disagreements = [
             Disagreement(uuid=e.uuid, human=h, model=m, text=e.text)

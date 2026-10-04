@@ -13,7 +13,7 @@ from ai_retro.db.models import ClassificationRow, EpisodeRow, EvalRunRow, GoldLa
 from ai_retro.errors import EmptyGoldSetError
 from ai_retro.evals.baseline import baseline_category
 from ai_retro.evals.criteria import stop_criteria
-from ai_retro.evals.metrics import agreement, class_deltas, compute_metrics
+from ai_retro.evals.metrics import class_deltas, compute_metrics
 from ai_retro.evals.render import render
 from ai_retro.evals.service import EvalResult, run_eval
 
@@ -91,11 +91,11 @@ def test_empty_class_has_no_division_by_zero() -> None:
     m = compute_metrics([("запрос", "запрос")], CATEGORIES)
     empty = m.classes["инструкция"]
     assert (empty.precision, empty.recall, empty.support) == (None, None, 0)
-    assert agreement([]) is None
+    assert compute_metrics([], CATEGORIES).agreement is None
 
 
 def test_agreement_and_deltas() -> None:
-    assert agreement([("а", "а"), ("а", "б")]) == 0.5
+    assert compute_metrics([("а", "а"), ("а", "б")], CATEGORIES).agreement == 0.5
     cur = {"поправка": {"precision": 0.8, "recall": None}}
     prev = {"поправка": {"precision": 0.6, "recall": 0.5}}
     d = class_deltas(cur, prev)["поправка"]
