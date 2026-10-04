@@ -3,10 +3,17 @@ from typing import Annotated
 
 import typer
 
-from ai_retro.classify.service import JSON_SCHEMA, SYSTEM_PROMPT
+from ai_retro.classify.service import CATEGORIES, JSON_SCHEMA, SYSTEM_PROMPT
 from ai_retro.config import Settings
 from ai_retro.db.session import make_engine, migrate
 from ai_retro.errors import AiRetroError
+from ai_retro.label.service import (
+    ensure_sample,
+    pending_items,
+    pending_relabel_items,
+    render_item,
+    save_label,
+)
 from ai_retro.llm import make_claude_call
 from ai_retro.scan.service import parse_since, scan
 
@@ -38,3 +45,51 @@ def scan_command(
         typer.echo(f"Ошибка: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(f"Эпизодов найдено: {result.found}, классифицировано: {result.classified}")
+
+
+@app.command("label")
+def label_command(
+    relabel: Annotated[
+        bool, typer.Option(help="Повторная разметка вслепую: 20 размеченных эпизодов заново.")
+    ] = False,
+    extend: Annotated[bool, typer.Option(help="Добавить в выборку новые эпизоды.")] = False,
+) -> None:
+    """Разметить эпизоды выборки в терминале: так собирается эталон."""
+    settings = Settings()
+    try:
+        engine = make_engine(settings.db_path)
+        migrate(engine)
+        if relabel:
+            items = pending_relabel_items(engine)
+        else:
+            added = ensure_sample(engine, extend=extend)
+            if added:
+                typer.echo(f"В выборку добавлено эпизодов: {added}")
+            items = pending_items(engine)
+        if not items:
+            typer.echo("Размечать нечего.")
+            return
+        keys = {str(i): c for i, c in enumerate(CATEGORIES, start=1)}
+        legend = "  ".join(f"{k}={c}" for k, c in keys.items()) + "  s=пропустить  q=выход"
+        done = 0
+        for number, item in enumerate(items, start=1):
+            typer.echo(render_item(item, number=number, total=len(items)))
+            typer.echo(legend)
+            while True:
+                try:
+                    key = typer.getchar()
+                except (EOFError, KeyboardInterrupt):
+                    key = "q"
+                if key in keys or key in ("s", "q", "\x03", "\x04", ""):
+                    break
+            if key in ("q", "\x03", "\x04", ""):
+                typer.echo(f"Прервано. Размечено в этом запуске: {done}.")
+                return
+            if key == "s":
+                continue
+            save_label(engine, item.uuid, keys[key], relabel=relabel, now=datetime.now(UTC))
+            done += 1
+    except AiRetroError as exc:
+        typer.echo(f"Ошибка: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Готово. Размечено в этом запуске: {done}.")

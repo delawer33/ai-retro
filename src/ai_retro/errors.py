@@ -23,3 +23,16 @@ class InvalidSinceError(AiRetroError):
         super().__init__(
             f"Не понимаю --since {value!r}: ожидается число и единица, напр. 12h, 1d, 2w."
         )
+
+
+class LabelExistsError(AiRetroError):
+    def __init__(self, uuid: str) -> None:
+        super().__init__(
+            f"Эпизод {uuid} уже размечен: эталон не переписывается. "
+            "Для повторной разметки используй --relabel."
+        )
+
+
+class NothingToLabelError(AiRetroError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)

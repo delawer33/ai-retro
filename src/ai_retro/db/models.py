@@ -43,6 +43,16 @@ class GoldLabelRow(Base):
     is_relabel: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class GoldSampleRow(Base):
+    """Выборка эпизодов под разметку; порядок — по id. Нужна, чтобы разметку можно было продолжить."""
+
+    __tablename__ = "gold_sample"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    episode_uuid: Mapped[str] = mapped_column(ForeignKey("episodes.uuid"), unique=True)
+    split: Mapped[str] = mapped_column(String)  # dev | test
+
+
 class EvalRunRow(Base):
     __tablename__ = "eval_runs"
 
