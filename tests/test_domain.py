@@ -71,7 +71,7 @@ def test_bad_rules() -> None:
 
 
 def test_is_scratch() -> None:
-    assert is_scratch("/home/u/.config/Claude/scratch/workspaces/abc/scratch-2026-09-05")
+    assert is_scratch("/home/u/.config/Claude/scratch-workspaces/a/b/scratch-2026-09-05")
     assert not is_scratch("/home/u/all/projects/x")
 
 
@@ -83,7 +83,7 @@ def test_domain_by_model_rejects_bad_answer() -> None:
 def test_scan_assigns_domains(engine: Engine, tmp_path: Path) -> None:
     logs = tmp_path / "logs"
     _log(logs, "a", "/home/u/all/coll/js", "лекция")
-    _log(logs, "b", "/home/u/.config/Claude/scratch/workspaces/w/scratch-1", "о смысле")
+    _log(logs, "b", "/home/u/.config/Claude/scratch-workspaces/w1/w2/scratch-1", "о смысле")
     _log(logs, "c", "/tmp/elsewhere", "что-то")
     model = DomainModel()
     _scan(engine, logs, model)
@@ -93,9 +93,22 @@ def test_scan_assigns_domains(engine: Engine, tmp_path: Path) -> None:
 
 def test_rescan_keeps_domains(engine: Engine, tmp_path: Path) -> None:
     logs = tmp_path / "logs"
-    _log(logs, "b", "/home/u/.config/Claude/scratch/workspaces/w/scratch-1", "о смысле")
+    _log(logs, "b", "/home/u/.config/Claude/scratch-workspaces/w1/w2/scratch-1", "о смысле")
     model = DomainModel()
     _scan(engine, logs, model)
     _scan(engine, logs, DomainModel("жизнь"))
     assert _domains(engine) == {"s-b": "философия"}
     assert len(model.calls) == 1
+
+
+def test_failed_model_answer_does_not_abort_scan_and_is_retried(
+    engine: Engine, tmp_path: Path
+) -> None:
+    logs = tmp_path / "logs"
+    scratch = "/home/u/.config/Claude/scratch-workspaces/w1/w2/scratch-1"
+    _log(logs, "a", "/home/u/all/coll/js", "лекция")
+    _log(logs, "b", scratch, "о смысле")
+    _scan(engine, logs, DomainModel("погода"))
+    assert _domains(engine) == {"s-a": "учёба", "s-b": "иное"}
+    _scan(engine, logs, DomainModel("философия"))
+    assert _domains(engine) == {"s-a": "учёба", "s-b": "философия"}

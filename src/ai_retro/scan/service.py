@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from ai_retro.classify.service import CLASSIFIER_VERSION, LOOP_MARKER, classify_many
 from ai_retro.db.models import ClassificationRow, EpisodeRow
-from ai_retro.domain.service import assign_domains
+from ai_retro.domain.service import OTHER, assign_domains, is_scratch
 from ai_retro.errors import InvalidSinceError, LogsDirNotFoundError
 from ai_retro.llm import ModelCall
 from ai_retro.parsing.conversations import records_to_conversations
@@ -59,11 +59,13 @@ def scan(
     with Session(engine) as session:
         known = {
             conversation_id: domain
-            for conversation_id, domain in session.execute(
-                select(EpisodeRow.conversation_id, EpisodeRow.domain)
+            for conversation_id, project, domain in session.execute(
+                select(EpisodeRow.conversation_id, EpisodeRow.project, EpisodeRow.domain)
                 .where(EpisodeRow.domain.is_not(None))
                 .distinct()
             )
+            # scratch с «иное» — следствие сбоя или прежнего кода: пересматриваем, если есть модель
+            if not (domain_call is not None and domain == OTHER and is_scratch(project))
         }
         in_window = {d.conversation_id for d in drafts}
         fresh = [c for c in conversations if c.id in in_window and c.id not in known]

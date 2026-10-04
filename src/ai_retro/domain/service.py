@@ -12,7 +12,7 @@ from ai_retro.parsing.schemas import Conversation
 DOMAINS = ("работа", "личные проекты", "учёба", "идеи", "философия", "жизнь", "иное")
 OTHER = "иное"
 # Беседы desktop-приложения без папки живут в каталоге с этим фрагментом пути.
-SCRATCH_MARKER = "Claude/scratch/"
+SCRATCH_MARKER = "Claude/scratch-workspaces/"
 FIRST_TEXT_LIMIT = 2000
 
 # Страховка от петли (ADR 0002): тот же маркер, что у классификатора.
@@ -67,6 +67,14 @@ def domain_by_model(call: ModelCall, first_text: str) -> str:
     return str(domain)
 
 
+def _domain_or_other(call: ModelCall, first_text: str) -> str:
+    """Сбой модели на одной беседе не валит скан: она получает «иное» и будет пересмотрена."""
+    try:
+        return domain_by_model(call, first_text)
+    except ModelCallError:
+        return OTHER
+
+
 def _first_text(conversation: Conversation) -> str | None:
     return next((r.text for r in conversation.records if r.text), None)
 
@@ -94,6 +102,6 @@ def assign_domains(
     if scratch and call is not None:
         model_call = call
         with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
-            answers = pool.map(lambda item: domain_by_model(model_call, item[1]), scratch)
+            answers = pool.map(lambda item: _domain_or_other(model_call, item[1]), scratch)
             result.update({cid: d for (cid, _), d in zip(scratch, answers, strict=True)})
     return result
