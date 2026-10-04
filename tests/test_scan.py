@@ -12,6 +12,7 @@ from ai_retro.cli import app
 from ai_retro.db.models import ClassificationRow, EpisodeRow
 from ai_retro.errors import ModelCallError
 from ai_retro.scan.service import parse_since, scan
+from tests.conftest import user_line
 
 
 class FakeModel:
@@ -74,3 +75,36 @@ def test_cli_missing_claude(monkeypatch: pytest.MonkeyPatch) -> None:
     result = CliRunner().invoke(app, ["scan"])
     assert result.exit_code != 0
     assert "claude" in result.output
+
+
+def test_scan_rewind_stores_signal_and_stays_idempotent(engine: Engine, tmp_path: Path) -> None:
+    project = tmp_path / "logs" / "-p"
+    project.mkdir(parents=True)
+    asst = json.dumps(
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "parentUuid": "u1",
+            "timestamp": "2026-09-25T11:00:30.000Z",
+            "message": {"content": [{"type": "text", "text": "ок"}]},
+        }
+    )
+    head = [user_line("u1", "корень", "2026-09-25T11:00:00.000Z"), asst]
+    (project / "old.jsonl").write_text(
+        "\n".join([*head, user_line("u2", "старая", "2026-09-25T11:01:00.000Z", parent="a1")]),
+        encoding="utf-8",
+    )
+    (project / "new.jsonl").write_text(
+        "\n".join([*head, user_line("n2", "новая", "2026-09-25T11:05:00.000Z", parent="a1")]),
+        encoding="utf-8",
+    )
+    model = FakeModel()
+    first = scan(engine, model, logs_dir=tmp_path / "logs", since=None, threads=1)
+    second = scan(engine, model, logs_dir=tmp_path / "logs", since=None, threads=1)
+    assert (first.found, first.classified, second.found, second.classified) == (3, 3, 3, 0)
+    with Session(engine) as s:
+        row = s.get(EpisodeRow, "n2")
+        assert row is not None
+        assert row.signals == ["rewind"]
+        assert "старая" in (row.context or "")
+        assert _count(engine, EpisodeRow) == 3
