@@ -1,13 +1,17 @@
-import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from ai_retro.classify.service import CATEGORIES, CLASSIFIER_VERSION, classify_many
+from ai_retro.classify.service import (
+    CATEGORIES,
+    EpisodeInput,
+    build_prompt,
+    classifier_version,
+    classify_many,
+)
 from ai_retro.db.models import ClassificationRow, EpisodeRow, EvalRunRow, GoldLabelRow
 from ai_retro.errors import EmptyGoldSetError
 from ai_retro.evals.baseline import baseline_category
@@ -17,7 +21,6 @@ from ai_retro.llm import ModelCall
 
 DEV = "dev"
 TEST = "test"
-PROMPT_FILE = Path(__file__).resolve().parents[1] / "classify" / "service.py"
 
 
 @dataclass(frozen=True)
@@ -41,22 +44,6 @@ class EvalResult:
     checks: list[Check]
 
 
-def prompt_git_sha(path: Path = PROMPT_FILE) -> str:
-    """Короткий git sha последнего коммита, тронувшего промпт; `unknown` вне git."""
-    try:
-        proc = subprocess.run(
-            ["git", "log", "-1", "--format=%h", "--", path.name],
-            cwd=path.parent,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return "unknown"
-    return proc.stdout.strip() or "unknown"
-
-
 def _labels(session: Session) -> tuple[dict[str, GoldLabelRow], dict[str, GoldLabelRow]]:
     """(последняя обычная метка, последняя повторная) по эпизоду."""
     gold: dict[str, GoldLabelRow] = {}
@@ -77,30 +64,63 @@ def _ceiling_pairs(session: Session) -> list[Pair]:
     return [(first[u], r.category) for u, r in relabels.items() if u in first]
 
 
+def _episode_input(episode: EpisodeRow) -> EpisodeInput:
+    # Те же правила, что у scan: при rewind контекст — начало брошенной ветки.
+    rewind = "rewind" in episode.signals
+    return EpisodeInput(
+        text=episode.text,
+        signals=episode.signals,
+        agent_reply=None if rewind else episode.context,
+        abandoned_branch=episode.context if rewind else None,
+    )
+
+
 def _model_categories(
-    session: Session, episodes: list[EpisodeRow], call: ModelCall, *, threads: int, refresh: bool
+    session: Session,
+    episodes: list[EpisodeRow],
+    call: ModelCall,
+    *,
+    version: str,
+    threads: int,
+    refresh: bool,
+    context_chars: int,
 ) -> dict[str, str]:
     """Категории из базы; недостающие (или все при refresh) классифицируются заново."""
     categories: dict[str, str] = {}
     for row in session.scalars(
         select(ClassificationRow)
-        .where(ClassificationRow.classifier_version == CLASSIFIER_VERSION)
+        .where(ClassificationRow.classifier_version == version)
         .order_by(ClassificationRow.id)
     ):
         categories[row.episode_uuid] = row.category
-    todo = [(e.uuid, e.text) for e in episodes if refresh or e.uuid not in categories]
-    for uuid, result in classify_many(call, todo, threads=threads).items():
+    todo = [
+        (e.uuid, build_prompt(_episode_input(e), context_chars=context_chars))
+        for e in episodes
+        if refresh or e.uuid not in categories
+    ]
+    outcome = classify_many(call, todo, threads=threads)
+    for uuid, result in outcome.results.items():
         session.add(
             ClassificationRow(
                 episode_uuid=uuid,
                 category=result.category,
                 gist=result.gist,
-                classifier_version=CLASSIFIER_VERSION,
+                classifier_version=version,
             )
         )
         categories[uuid] = result.category
     session.commit()
+    if outcome.error is not None:
+        raise outcome.error
     return categories
+
+
+def ensure_gold(engine: Engine, split: str) -> None:
+    """Падает с подсказкой про `label`, если в split нет эталона — до обращения к модели."""
+    with Session(engine) as session:
+        gold, _ = _labels(session)
+        if not any(row.split == split for row in gold.values()):
+            raise EmptyGoldSetError(split)
 
 
 def run_eval(
@@ -112,9 +132,10 @@ def run_eval(
     threads: int = 1,
     model: str,
     claude_version: str,
-    prompt_sha: str,
+    context_chars: int = 2000,
     now: datetime | None = None,
 ) -> EvalResult:
+    version = classifier_version(model)
     with Session(engine) as session:
         gold, _ = _labels(session)
         uuids = [u for u, row in gold.items() if row.split == split]
@@ -125,7 +146,15 @@ def run_eval(
                 select(EpisodeRow).where(EpisodeRow.uuid.in_(uuids)).order_by(EpisodeRow.timestamp)
             )
         )
-        predicted = _model_categories(session, episodes, call, threads=threads, refresh=refresh)
+        predicted = _model_categories(
+            session,
+            episodes,
+            call,
+            version=version,
+            threads=threads,
+            refresh=refresh,
+            context_chars=context_chars,
+        )
 
         model_pairs = [(gold[e.uuid].category, predicted[e.uuid]) for e in episodes]
         baseline_pairs = [
@@ -160,7 +189,7 @@ def run_eval(
         session.add(
             EvalRunRow(
                 started_at=now or datetime.now(UTC),
-                classifier_version=f"{CLASSIFIER_VERSION}@{prompt_sha}",
+                classifier_version=version,
                 claude_version=claude_version,
                 model=model,
                 split=split,

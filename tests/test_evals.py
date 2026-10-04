@@ -7,7 +7,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
-from ai_retro.classify.service import CATEGORIES, CLASSIFIER_VERSION
+from ai_retro.classify.service import CATEGORIES, classifier_version
 from ai_retro.cli import app
 from ai_retro.db.models import ClassificationRow, EpisodeRow, EvalRunRow, GoldLabelRow
 from ai_retro.errors import EmptyGoldSetError
@@ -53,7 +53,7 @@ def _add(
                     episode_uuid=uuid,
                     category=model,
                     gist="g",
-                    classifier_version=CLASSIFIER_VERSION,
+                    classifier_version=classifier_version("haiku"),
                 )
             )
         s.commit()
@@ -65,7 +65,6 @@ def _run(engine: Engine, split: str = "dev") -> EvalResult:
         _fail,
         model="haiku",
         claude_version="9.9",
-        prompt_sha="abc1234",
         split=split,
     )
 
@@ -143,7 +142,7 @@ def test_eval_saves_run_and_second_run_shows_delta(engine: Engine) -> None:
                 episode_uuid="d1",
                 category="поправка",
                 gist="g",
-                classifier_version=CLASSIFIER_VERSION,
+                classifier_version=classifier_version("haiku"),
             )
         )
         s.commit()
@@ -154,7 +153,7 @@ def test_eval_saves_run_and_second_run_shows_delta(engine: Engine) -> None:
     with Session(engine) as s:
         runs = list(s.scalars(select(EvalRunRow).order_by(EvalRunRow.id)))
     assert len(runs) == 2
-    assert runs[0].classifier_version == f"{CLASSIFIER_VERSION}@abc1234"
+    assert runs[0].classifier_version == classifier_version("haiku")
     assert (runs[0].claude_version, runs[0].model, runs[0].split) == ("9.9", "haiku", "dev")
     assert runs[0].metrics["model"]["classes"]["поправка"]["recall"] == 0.0
     assert "baseline" in runs[0].metrics
@@ -177,8 +176,9 @@ def test_eval_classifies_missing_with_model(engine: Engine) -> None:
         calls.append(prompt)
         return json.dumps({"category": "запрос", "gist": "g"})
 
-    result = run_eval(engine, call, model="m", claude_version="1", prompt_sha="x")
-    assert calls == ["реплика"]
+    result = run_eval(engine, call, model="haiku", claude_version="1")
+    assert len(calls) == 1
+    assert calls[0].endswith("Реплика пользователя:\nреплика")
     assert result.disagreements == []
 
 
@@ -227,3 +227,34 @@ def test_eval_command_prints_metrics(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert result.exit_code == 0, result.output
     assert "precision" in result.output
     assert "accuracy" not in result.output
+
+
+def test_eval_command_empty_gold_without_claude(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AI_RETRO_DB_PATH", str(tmp_path / "x.db"))
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    result = CliRunner().invoke(app, ["eval"])
+    assert result.exit_code == 1
+    assert "label" in result.output
+
+
+def test_eval_saves_partial_results_then_raises(engine: Engine) -> None:
+    from ai_retro.errors import ModelCallError
+
+    _add(engine, "d1", "запрос", None)
+    _add(engine, "d2", "запрос", None)
+
+    def call(prompt: str) -> str:
+        if "d2-текст" in prompt:
+            raise ModelCallError("упало")
+        return json.dumps({"category": "запрос", "gist": "g"})
+
+    with Session(engine) as s:
+        s.get(EpisodeRow, "d2").text = "d2-текст"  # type: ignore[union-attr]
+        s.commit()
+    with pytest.raises(ModelCallError):
+        run_eval(engine, call, model="haiku", claude_version="1")
+    with Session(engine) as s:
+        saved = list(s.scalars(select(ClassificationRow.episode_uuid)))
+    assert saved == ["d1"]

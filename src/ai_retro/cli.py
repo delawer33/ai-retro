@@ -16,7 +16,7 @@ from ai_retro.domain.service import SYSTEM_PROMPT as DOMAIN_PROMPT
 from ai_retro.domain.service import parse_rules
 from ai_retro.errors import AiRetroError
 from ai_retro.evals.render import render
-from ai_retro.evals.service import DEV, TEST, prompt_git_sha, run_eval
+from ai_retro.evals.service import DEV, TEST, ensure_gold, run_eval
 from ai_retro.label.service import (
     ensure_sample,
     pending_items,
@@ -127,21 +127,23 @@ def eval_command(
 ) -> None:
     """Качество классификатора на эталоне: метрики, бейзлайн, потолок, стоп-критерий."""
     settings = Settings()
+    split = TEST if test else DEV
     try:
+        engine = make_engine(settings.db_path)
+        migrate(engine)
+        ensure_gold(engine, split)
         call = make_claude_call(
             system_prompt=SYSTEM_PROMPT, json_schema=JSON_SCHEMA, model=settings.model
         )
-        engine = make_engine(settings.db_path)
-        migrate(engine)
         result = run_eval(
             engine,
             call,
-            split=TEST if test else DEV,
+            split=split,
             refresh=refresh,
             threads=settings.threads,
             model=settings.model,
             claude_version=claude_version(),
-            prompt_sha=prompt_git_sha(),
+            context_chars=settings.context_chars,
         )
     except AiRetroError as exc:
         typer.echo(f"Ошибка: {exc}", err=True)
