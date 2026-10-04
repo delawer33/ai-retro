@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from ai_retro.classify.service import CLASSIFIER_VERSION, LOOP_MARKER, classify_many
 from ai_retro.db.models import ClassificationRow, EpisodeRow
+from ai_retro.domain.service import assign_domains
 from ai_retro.errors import InvalidSinceError, LogsDirNotFoundError
 from ai_retro.llm import ModelCall
 from ai_retro.parsing.conversations import records_to_conversations
@@ -38,6 +39,8 @@ def scan(
     logs_dir: Path,
     since: datetime | None,
     threads: int,
+    domain_rules: list[tuple[Path, str]] | None = None,
+    domain_call: ModelCall | None = None,
 ) -> ScanResult:
     if not logs_dir.is_dir():
         raise LogsDirNotFoundError(logs_dir)
@@ -54,12 +57,24 @@ def scan(
     ]
 
     with Session(engine) as session:
+        known = {
+            conversation_id: domain
+            for conversation_id, domain in session.execute(
+                select(EpisodeRow.conversation_id, EpisodeRow.domain)
+                .where(EpisodeRow.domain.is_not(None))
+                .distinct()
+            )
+        }
+        fresh = [c for c in conversations if c.id not in known]
+        domains: dict[str, str | None] = {**known}
+        domains |= assign_domains(fresh, domain_rules or [], domain_call, threads=threads)
         for draft in drafts:
             session.merge(
                 EpisodeRow(
                     uuid=draft.uuid,
                     conversation_id=draft.conversation_id,
                     project=draft.project,
+                    domain=domains.get(draft.conversation_id),
                     timestamp=draft.timestamp,
                     text=draft.text,
                     context=draft.context,

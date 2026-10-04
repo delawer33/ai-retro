@@ -23,3 +23,11 @@ class InvalidSinceError(AiRetroError):
         super().__init__(
             f"Не понимаю --since {value!r}: ожидается число и единица, напр. 12h, 1d, 2w."
         )
+
+
+class InvalidDomainRulesError(AiRetroError):
+    def __init__(self, part: str) -> None:
+        super().__init__(
+            f"Не понимаю правило области {part!r} в AI_RETRO_DOMAIN_RULES: "
+            "ожидается «префикс=область», правила через «;», область из списка в CONTEXT.md."
+        )
