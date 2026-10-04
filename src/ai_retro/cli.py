@@ -32,6 +32,7 @@ from ai_retro.report.service import (
 )
 from ai_retro.report.service import (
     build_report,
+    check_report_path,
     render_report,
     write_report,
 )
@@ -138,6 +139,7 @@ def report_command(
     """Найти паттерны среди поправок и инструкций и записать markdown-отчёт."""
     settings = Settings()
     try:
+        check_report_path(output)
         now = datetime.now(UTC)
         since_dt = parse_since(since, now=now) if since else None
         call = make_claude_call(

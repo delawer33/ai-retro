@@ -13,6 +13,7 @@ from ai_retro.errors import NoClassificationsError
 from ai_retro.report.service import (
     PASTE_MARKER,
     build_report,
+    check_report_path,
     mask_pastes,
     render_report,
     write_report,
@@ -119,11 +120,16 @@ def test_render_has_all_sections(engine: Engine) -> None:
 
 
 def test_pastes_shown_as_marker() -> None:
-    text = "смотри\n```\nsecret log\n```\nи [Pasted text #1 +30 lines] ещё"
+    text = (
+        "смотри\n```\nsecret log\n```\nи [Pasted text #1 +30 lines] и "
+        "<pasted_content>long log</pasted_content> ещё"
+    )
     masked = mask_pastes(text)
     assert "secret log" not in masked
     assert "Pasted text" not in masked
-    assert masked.count(PASTE_MARKER) == 2
+    assert "long log" not in masked
+    assert masked.count(PASTE_MARKER[:-1]) == 3
+    assert "симв.]" in masked
 
 
 def test_no_classifications_raises(engine: Engine) -> None:
@@ -135,6 +141,20 @@ def test_report_never_writes_claude_md(tmp_path: Path) -> None:
     with pytest.raises(Exception, match="CLAUDE.md"):
         write_report(tmp_path / "CLAUDE.md", "x")
     assert not (tmp_path / "CLAUDE.md").exists()
+
+
+def test_protected_path_case_insensitive(tmp_path: Path) -> None:
+    with pytest.raises(Exception, match="claude.md"):
+        check_report_path(tmp_path / "claude.md")
+
+
+def test_cli_rejects_protected_output_before_model_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AI_RETRO_DB_PATH", str(tmp_path / "db" / "x.db"))
+    result = CliRunner().invoke(app, ["report", "--output", str(tmp_path / "CLAUDE.md")])
+    assert result.exit_code == 1
+    assert not (tmp_path / "db" / "x.db").exists()
 
 
 def test_cli_report_without_classifications(

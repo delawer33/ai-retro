@@ -24,7 +24,7 @@ NO_DOMAIN = "без области"
 PASTE_MARKER = "[вставка]"
 # Ниже этого сходства суть эпизода с названием паттерна — повод перепроверить глазами.
 RECHECK_SIMILARITY = 0.4
-PROTECTED_NAMES = ("CLAUDE.md", "SKILL.md")
+PROTECTED_NAMES = frozenset({"claude.md", "skill.md"})
 
 SYSTEM_PROMPT = f"""{LOOP_MARKER}
 Тебе дан список сутей эпизодов: «номер: суть». Сгруппируй номера по смыслу: в одну группу —
@@ -52,7 +52,10 @@ JSON_SCHEMA = {
     "additionalProperties": False,
 }
 
-_PASTE_RE = re.compile(r"```.*?```|\[(?:Pasted text|Image)[^\]]*\]", re.DOTALL)
+_PASTE_RE = re.compile(
+    r"<pasted_content>.*?</pasted_content>|```.*?```|\[(?:Pasted text|Image)[^\]]*\]",
+    re.DOTALL,
+)
 
 
 def load_report_data(
@@ -153,8 +156,8 @@ def build_report(
 
 
 def mask_pastes(text: str) -> str:
-    """Вставки (блоки кода, плейсхолдеры вставок) показываются маркером, не текстом."""
-    return _PASTE_RE.sub(PASTE_MARKER, text)
+    """Вставки (<pasted_content>, блоки кода, плейсхолдеры) показываются маркером с длиной."""
+    return _PASTE_RE.sub(lambda m: f"[вставка, {len(m.group(0))} симв.]", text)
 
 
 def example_text(text: str) -> str:
@@ -163,7 +166,10 @@ def example_text(text: str) -> str:
 
 
 def recheck_count(pattern: Pattern) -> int:
-    """Эпизоды, чья суть мало похожа на название паттерна: кандидаты в «фальшивые»."""
+    """Эпизоды, чья суть мало похожа на название паттерна: кандидаты в «фальшивые».
+
+    Это прокси по сходству формулировок, не оценка модели (см. ADR 0004).
+    """
     title = pattern.title.lower()
     return sum(
         1
@@ -221,10 +227,22 @@ def render_report(data: ReportData) -> str:
             f"{i}. {p.title} — эпизодов: {len(p.episodes)}, "
             f"перепроверить: {recheck_count(p)} из {len(p.episodes)}"
         )
+    lines += [
+        "",
+        (
+            "Число «перепроверить» — грубая оценка по сходству формулировок сути и названия, "
+            "а не вывод модели: смотрите эпизоды глазами."
+        ),
+    ]
     return "\n".join(lines) + "\n"
 
 
-def write_report(path: Path, text: str) -> None:
-    if path.name in PROTECTED_NAMES:
+def check_report_path(path: Path) -> None:
+    """Отчёт не пишется поверх CLAUDE.md и SKILL.md (без учёта регистра)."""
+    if path.name.casefold() in PROTECTED_NAMES:
         raise InvalidReportPathError(path)
+
+
+def write_report(path: Path, text: str) -> None:
+    check_report_path(path)
     path.write_text(text, encoding="utf-8")
