@@ -36,3 +36,11 @@ class LabelExistsError(AiRetroError):
 class NothingToLabelError(AiRetroError):
     def __init__(self, reason: str) -> None:
         super().__init__(reason)
+
+
+class InvalidDomainRulesError(AiRetroError):
+    def __init__(self, part: str) -> None:
+        super().__init__(
+            f"Не понимаю правило области {part!r} в AI_RETRO_DOMAIN_RULES: "
+            "ожидается «префикс=область», правила через «;», область из списка в CONTEXT.md."
+        )

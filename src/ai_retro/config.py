@@ -11,3 +11,6 @@ class Settings(BaseSettings):
     model: str = "haiku"
     threads: int = 3
     context_chars: int = 2000
+
+    domain_rules: str = "all/coll=учёба;all/projects=личные проекты;Documents/avito=работа"
+    home: Path = Path.home()

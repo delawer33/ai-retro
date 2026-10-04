@@ -11,6 +11,9 @@ from ai_retro.classify.service import (
 )
 from ai_retro.config import Settings
 from ai_retro.db.session import make_engine, migrate
+from ai_retro.domain.service import JSON_SCHEMA as DOMAIN_SCHEMA
+from ai_retro.domain.service import SYSTEM_PROMPT as DOMAIN_PROMPT
+from ai_retro.domain.service import parse_rules
 from ai_retro.errors import AiRetroError
 from ai_retro.label.service import (
     ensure_sample,
@@ -41,6 +44,10 @@ def scan_command(
         call = make_claude_call(
             system_prompt=SYSTEM_PROMPT, json_schema=JSON_SCHEMA, model=settings.model
         )
+        domain_rules = parse_rules(settings.domain_rules, home=settings.home)
+        domain_call = make_claude_call(
+            system_prompt=DOMAIN_PROMPT, json_schema=DOMAIN_SCHEMA, model=settings.model
+        )
         engine = make_engine(settings.db_path)
         migrate(engine)
         result = scan(
@@ -52,6 +59,8 @@ def scan_command(
             classifier_version=classifier_version(settings.model),
             context_chars=settings.context_chars,
             announce=lambda n: typer.echo(f"Эпизодов к классификации (уйдёт в модель): {n}"),
+            domain_rules=domain_rules,
+            domain_call=domain_call,
         )
     except AiRetroError as exc:
         typer.echo(f"Ошибка: {exc}", err=True)
