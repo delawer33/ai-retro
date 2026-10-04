@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -23,6 +24,17 @@ from ai_retro.label.service import (
     save_label,
 )
 from ai_retro.llm import make_claude_call
+from ai_retro.report.service import (
+    JSON_SCHEMA as REPORT_SCHEMA,
+)
+from ai_retro.report.service import (
+    SYSTEM_PROMPT as REPORT_PROMPT,
+)
+from ai_retro.report.service import (
+    build_report,
+    render_report,
+    write_report,
+)
 from ai_retro.scan.service import parse_since, scan
 
 app = typer.Typer(no_args_is_help=True, help="Анализ сессий Claude Code.")
@@ -114,3 +126,34 @@ def label_command(
         typer.echo(f"Ошибка: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(f"Готово. Размечено в этом запуске: {done}.")
+
+
+@app.command("report")
+def report_command(
+    since: Annotated[str | None, typer.Option(help="Период, напр. 12h, 1d, 2w.")] = None,
+    output: Annotated[Path, typer.Option(help="Файл markdown-отчёта.")] = Path(
+        "ai-retro-report.md"
+    ),
+) -> None:
+    """Найти паттерны среди поправок и инструкций и записать markdown-отчёт."""
+    settings = Settings()
+    try:
+        now = datetime.now(UTC)
+        since_dt = parse_since(since, now=now) if since else None
+        call = make_claude_call(
+            system_prompt=REPORT_PROMPT, json_schema=REPORT_SCHEMA, model=settings.model
+        )
+        engine = make_engine(settings.db_path)
+        migrate(engine)
+        data = build_report(
+            engine,
+            call,
+            since=since_dt,
+            now=now,
+            classifier_version=classifier_version(settings.model),
+        )
+        write_report(output, render_report(data))
+    except AiRetroError as exc:
+        typer.echo(f"Ошибка: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"Паттернов: {len(data.patterns)}. Отчёт: {output}")
