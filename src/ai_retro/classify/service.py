@@ -1,26 +1,19 @@
+import hashlib
 import json
 from collections.abc import Sequence
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
+from pathlib import Path
 
-from ai_retro.errors import ModelCallError
+from ai_retro.errors import AiRetroError, ModelCallError
 from ai_retro.llm import ModelCall
 
-CLASSIFIER_VERSION = "v0"
 CATEGORIES = ("поправка", "инструкция", "запрос", "вызов скилла", "нейтрально")
 # Страховка от петли (ADR 0002): scan пропускает беседы, где встречается маркер.
 LOOP_MARKER = "[ai-retro-classifier]"
-
-SYSTEM_PROMPT = f"""{LOOP_MARKER}
-Ты классифицируешь одну реплику пользователя из беседы с агентом.
-Категория (одна; если подходят несколько, старшая: поправка > инструкция > запрос > нейтрально):
-- поправка: реплика реагирует на то, что агент сделал не так, включая «я же просил»;
-- инструкция: правило, факт или предпочтение, которые переживут текущую задачу;
-- запрос: новая задача или продолжение текущей;
-- вызов скилла: вызов слэш-команды;
-- нейтрально: ничего из перечисленного.
-Суть: одна фраза о том, что именно пользователь поправил или сообщил, без привязки к словам реплики.
-"""
+# Гайд по разметке — одновременно системный промпт классификатора.
+GUIDE_PATH = Path(__file__).with_name("guide.md")
+SYSTEM_PROMPT = GUIDE_PATH.read_text(encoding="utf-8")
 
 JSON_SCHEMA = {
     "type": "object",
@@ -33,14 +26,55 @@ JSON_SCHEMA = {
 }
 
 
+def prompt_sha(prompt: str = SYSTEM_PROMPT) -> str:
+    """Git-sha блоба промпта (как `git hash-object guide.md`), без вызова git."""
+    body = prompt.encode("utf-8")
+    return hashlib.sha1(b"blob %d\0" % len(body) + body, usedforsecurity=False).hexdigest()
+
+
+def classifier_version(model: str, prompt: str = SYSTEM_PROMPT) -> str:
+    return f"{prompt_sha(prompt)[:12]}+{model}"
+
+
+@dataclass(frozen=True)
+class EpisodeInput:
+    """Всё, что классификатор видит об эпизоде."""
+
+    text: str
+    signals: Sequence[str] = ()
+    agent_reply: str | None = None
+    abandoned_branch: str | None = None
+
+
+def _tail(text: str, limit: int) -> str:
+    return text if len(text) <= limit else "…" + text[-limit:]
+
+
+def _head(text: str, limit: int) -> str:
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def build_prompt(episode: EpisodeInput, *, context_chars: int) -> str:
+    """Контекст эпизода: признаки, ответ агента (хвост), брошенная ветка (начало), реплика."""
+    parts = [f"Признаки: {', '.join(episode.signals) if episode.signals else 'нет'}"]
+    if episode.agent_reply:
+        parts.append(
+            "Последний ответ агента перед репликой:\n" + _tail(episode.agent_reply, context_chars)
+        )
+    if "rewind" in episode.signals and episode.abandoned_branch:
+        parts.append("Начало брошенной ветки:\n" + _head(episode.abandoned_branch, context_chars))
+    parts.append("Реплика пользователя:\n" + episode.text)
+    return "\n\n".join(parts)
+
+
 @dataclass(frozen=True)
 class Classification:
     category: str
     gist: str
 
 
-def classify_episode(call: ModelCall, text: str) -> Classification:
-    raw = call(text)
+def classify_episode(call: ModelCall, prompt: str) -> Classification:
+    raw = call(prompt)
     try:
         data = json.loads(raw)
         category, gist = data["category"], data["gist"]
@@ -51,10 +85,28 @@ def classify_episode(call: ModelCall, text: str) -> Classification:
     return Classification(category=category, gist=gist)
 
 
+@dataclass
+class BatchOutcome:
+    results: dict[str, Classification] = field(default_factory=dict)
+    error: AiRetroError | None = None
+
+
 def classify_many(
     call: ModelCall, items: Sequence[tuple[str, str]], *, threads: int
-) -> dict[str, Classification]:
-    """items: (uuid, text). Ошибка модели на одном эпизоде прерывает прогон."""
+) -> BatchOutcome:
+    """items: (uuid, prompt). Первая ошибка останавливает запуск новых вызовов, но уже
+    полученные результаты возвращаются: вызывающий сохраняет их и только потом падает."""
+    outcome = BatchOutcome()
     with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
-        results = pool.map(lambda item: classify_episode(call, item[1]), items)
-        return {uuid: result for (uuid, _), result in zip(items, results, strict=True)}
+        futures = {pool.submit(classify_episode, call, prompt): uuid for uuid, prompt in items}
+        for future in as_completed(futures):
+            if future.cancelled():
+                continue
+            try:
+                outcome.results[futures[future]] = future.result()
+            except AiRetroError as exc:
+                if outcome.error is None:
+                    outcome.error = exc
+                    for pending in futures:
+                        pending.cancel()
+    return outcome

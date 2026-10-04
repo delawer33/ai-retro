@@ -119,7 +119,7 @@ def test_rewind_into_new_file(tmp_path: Path) -> None:
     assert "старая вторая" in context
     assert "ответ на старую" in context
     assert "старая третья" not in context
-    assert episodes["u2"].context is None
+    assert episodes["u2"].context == "ответ один"  # не rewind: последний ответ агента
 
 
 def test_chain_of_two_rewinds(tmp_path: Path) -> None:

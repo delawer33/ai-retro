@@ -10,21 +10,27 @@ _CONTEXT_LIMIT = 1000
 
 def conversations_to_episodes(conversations: Iterable[Conversation]) -> list[EpisodeDraft]:
     """Эпизод = текстовая реплика пользователя; у первой реплики после rewind — признак и контекст."""
-    return [
-        EpisodeDraft(
-            uuid=record.uuid,
-            conversation_id=conversation.id,
-            project=record.project,
-            timestamp=record.timestamp,
-            text=record.text,
-            context=_rewind_context(rewinds[record.uuid]) if record.uuid in rewinds else None,
-            signals=(REWIND,) if record.uuid in rewinds else (),
-        )
-        for conversation in conversations
-        for rewinds in [{r.episode_uuid: r for r in conversation.rewinds}]
-        for record in conversation.records
-        if record.kind == "user" and record.text is not None
-    ]
+    drafts: list[EpisodeDraft] = []
+    for conversation in conversations:
+        rewinds = {r.episode_uuid: r for r in conversation.rewinds}
+        last_reply: str | None = None
+        for record in conversation.records:
+            if record.kind == "assistant" and record.agent_text:
+                last_reply = record.agent_text
+            elif record.kind == "user" and record.text is not None:
+                rewind = rewinds.get(record.uuid)
+                drafts.append(
+                    EpisodeDraft(
+                        uuid=record.uuid,
+                        conversation_id=conversation.id,
+                        project=record.project,
+                        timestamp=record.timestamp,
+                        text=record.text,
+                        context=_rewind_context(rewind) if rewind else last_reply,
+                        signals=(REWIND,) if rewind else (),
+                    )
+                )
+    return drafts
 
 
 def _rewind_context(rewind: Rewind) -> str:
