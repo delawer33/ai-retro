@@ -147,7 +147,7 @@ def test_cli_prints_count_before_model_and_version_stored(
     monkeypatch.setattr("ai_retro.cli.make_claude_call", lambda **_: lambda _p: OK)
     result = CliRunner().invoke(app, ["scan"])
     assert result.exit_code == 0, result.output
-    assert "к классификации (уйдёт в модель): 2" in result.output
+    assert "Вызовов к модели (эпизоды и области): 2" in result.output
     from ai_retro.db.session import make_engine
 
     with Session(make_engine(tmp_path / "db" / "x.db")) as s:

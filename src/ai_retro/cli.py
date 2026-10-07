@@ -71,7 +71,7 @@ def scan_command(
             threads=settings.threads,
             classifier_version=classifier_version(settings.model),
             context_chars=settings.context_chars,
-            announce=lambda n: typer.echo(f"Эпизодов к классификации (уйдёт в модель): {n}"),
+            announce=lambda n: typer.echo(f"Вызовов к модели (эпизоды и области): {n}"),
             domain_rules=domain_rules,
             domain_call=domain_call,
         )

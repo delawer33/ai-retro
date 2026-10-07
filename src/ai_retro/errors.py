@@ -18,6 +18,13 @@ class ModelCallError(AiRetroError):
     pass
 
 
+class UnrecognizedModelError(ModelCallError):
+    def __init__(self, model: str) -> None:
+        super().__init__(
+            f"Модель {model!r} не опознана `claude`. Проверь AI_RETRO_MODEL (напр. haiku, sonnet)."
+        )
+
+
 class InvalidSinceError(AiRetroError):
     def __init__(self, value: str) -> None:
         super().__init__(

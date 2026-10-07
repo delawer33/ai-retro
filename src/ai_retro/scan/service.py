@@ -67,20 +67,45 @@ def scan(
     ]
 
     with Session(engine) as session:
-        known = {
-            conversation_id: domain
-            for conversation_id, project, domain in session.execute(
-                select(EpisodeRow.conversation_id, EpisodeRow.project, EpisodeRow.domain)
-                .where(EpisodeRow.domain.is_not(None))
-                .distinct()
+        known: dict[str, str] = {}
+        by_model: set[str] = set()
+        for conversation_id, project, domain, decided in session.execute(
+            select(
+                EpisodeRow.conversation_id,
+                EpisodeRow.project,
+                EpisodeRow.domain,
+                EpisodeRow.domain_by_model,
             )
-            # scratch с «иное» — следствие сбоя или прежнего кода: пересматриваем, если есть модель
-            if not (domain_call is not None and domain == OTHER and is_scratch(project))
-        }
+            .where(EpisodeRow.domain.is_not(None))
+            .distinct()
+        ):
+            if domain is None:
+                continue
+            # scratch с «иное» без решения модели — сбой или прежний код: пересматриваем
+            if domain_call is not None and domain == OTHER and is_scratch(project) and not decided:
+                continue
+            known[conversation_id] = domain
+            if decided:
+                by_model.add(conversation_id)
+        done = set(
+            session.scalars(
+                select(ClassificationRow.episode_uuid).where(
+                    ClassificationRow.classifier_version == classifier_version
+                )
+            )
+        )
+        todo = [d for d in drafts if d.uuid not in done and d.category is None]
         in_window = {d.conversation_id for d in drafts}
         fresh = [c for c in conversations if c.id in in_window and c.id not in known]
-        domains: dict[str, str | None] = {**known}
-        domains |= assign_domains(fresh, domain_rules or [], domain_call, threads=threads)
+        assigned = assign_domains(
+            fresh,
+            domain_rules or [],
+            domain_call,
+            threads=threads,
+            before_calls=(lambda n: announce(len(todo) + n)) if announce is not None else None,
+        )
+        domains: dict[str, str | None] = {**known, **assigned.domains}
+        by_model |= assigned.by_model
         for draft in drafts:
             session.merge(
                 EpisodeRow(
@@ -88,6 +113,7 @@ def scan(
                     conversation_id=draft.conversation_id,
                     project=draft.project,
                     domain=domains.get(draft.conversation_id),
+                    domain_by_model=draft.conversation_id in by_model,
                     timestamp=draft.timestamp,
                     text=draft.text,
                     context=draft.context,
@@ -96,13 +122,6 @@ def scan(
             )
         session.commit()
 
-        done = set(
-            session.scalars(
-                select(ClassificationRow.episode_uuid).where(
-                    ClassificationRow.classifier_version == classifier_version
-                )
-            )
-        )
         for draft in drafts:
             if draft.category is not None and draft.uuid not in done:
                 # Категория известна без модели: слэш-команда (суть — её имя).
@@ -115,9 +134,6 @@ def scan(
                     )
                 )
         session.commit()
-        todo = [d for d in drafts if d.uuid not in done and d.category is None]
-        if announce is not None:
-            announce(len(todo))
         classified = 0
         for start in range(0, len(todo), BATCH_SIZE):
             batch = [
