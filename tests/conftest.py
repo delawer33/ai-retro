@@ -6,6 +6,8 @@ from sqlalchemy import Engine
 
 from ai_retro.db.session import make_engine, migrate
 
+NO_SKILLS = Path("/nonexistent/skills")  # ни одного скилла: слэш-команды — обычные реплики
+
 
 @pytest.fixture
 def engine(tmp_path: Path) -> Engine:
@@ -62,3 +64,10 @@ def logs_dir(tmp_path: Path) -> Path:
     ]
     (project / "s1.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     return tmp_path / "logs"
+
+
+def make_skill(root: Path, name: str) -> Path:
+    """Скилл в корне `root`: `<root>/<name>/SKILL.md`; возвращает корень."""
+    (root / name).mkdir(parents=True, exist_ok=True)
+    (root / name / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+    return root

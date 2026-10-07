@@ -74,6 +74,7 @@ def scan_command(
             threads=settings.threads,
             classifier_version=classifier_version(settings.model),
             context_chars=settings.context_chars,
+            skills_dir=settings.skills_dir,
             announce=lambda n: typer.echo(f"Вызовов к модели (эпизоды и области): {n}"),
             domain_rules=domain_rules,
             domain_call=domain_call,
@@ -166,6 +167,7 @@ def report_command(
             since=since_dt,
             now=now,
             classifier_version=classifier_version(settings.model),
+            skills_dir=settings.skills_dir,
         )
     except AiRetroError as exc:
         typer.echo(f"Ошибка: {exc}", err=True)

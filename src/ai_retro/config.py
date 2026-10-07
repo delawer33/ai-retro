@@ -15,8 +15,9 @@ class Settings(BaseSettings):
 
     domain_rules: str = "all/coll=учёба;all/projects=личные проекты;Documents/avito=работа"
     home: Path = Path.home()
+    skills_dir: Path = Path.home() / ".claude" / "skills"
 
-    @field_validator("logs_dir", "db_path", "home")
+    @field_validator("logs_dir", "db_path", "home", "skills_dir")
     @classmethod
     def _expand_tilde(cls, value: Path) -> Path:
         return value.expanduser()

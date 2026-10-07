@@ -12,7 +12,7 @@ from ai_retro.cli import app
 from ai_retro.db.models import ClassificationRow, EpisodeRow
 from ai_retro.errors import ModelCallError
 from ai_retro.scan.service import parse_since, scan
-from tests.conftest import user_line
+from tests.conftest import NO_SKILLS, user_line
 
 
 class FakeModel:
@@ -41,9 +41,25 @@ def test_classify_rejects_bad_answer() -> None:
 
 def test_scan_is_idempotent(engine: Engine, logs_dir: Path) -> None:
     model = FakeModel()
-    first = scan(engine, model, logs_dir=logs_dir, since=None, threads=2, classifier_version="v")
+    first = scan(
+        engine,
+        model,
+        logs_dir=logs_dir,
+        since=None,
+        threads=2,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
+    )
     assert (first.found, first.classified) == (2, 2)
-    second = scan(engine, model, logs_dir=logs_dir, since=None, threads=2, classifier_version="v")
+    second = scan(
+        engine,
+        model,
+        logs_dir=logs_dir,
+        since=None,
+        threads=2,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
+    )
     assert (second.found, second.classified) == (2, 0)
     assert len(model.calls) == 2
     assert _count(engine, EpisodeRow) == 2
@@ -53,7 +69,13 @@ def test_scan_is_idempotent(engine: Engine, logs_dir: Path) -> None:
 def test_scan_since_filters(engine: Engine, logs_dir: Path) -> None:
     since = datetime(2026, 9, 25, 11, 0, 30, tzinfo=UTC)
     result = scan(
-        engine, FakeModel(), logs_dir=logs_dir, since=since, threads=1, classifier_version="v"
+        engine,
+        FakeModel(),
+        logs_dir=logs_dir,
+        since=since,
+        threads=1,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
     )
     assert result.found == 1
 
@@ -102,10 +124,22 @@ def test_scan_rewind_stores_signal_and_stays_idempotent(engine: Engine, tmp_path
     )
     model = FakeModel()
     first = scan(
-        engine, model, logs_dir=tmp_path / "logs", since=None, threads=1, classifier_version="v"
+        engine,
+        model,
+        logs_dir=tmp_path / "logs",
+        since=None,
+        threads=1,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
     )
     second = scan(
-        engine, model, logs_dir=tmp_path / "logs", since=None, threads=1, classifier_version="v"
+        engine,
+        model,
+        logs_dir=tmp_path / "logs",
+        since=None,
+        threads=1,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
     )
     assert (first.found, first.classified, second.found, second.classified) == (3, 3, 3, 0)
     with Session(engine) as s:

@@ -87,9 +87,12 @@ def _domain_or_none(call: ModelCall, first_text: str) -> str | None:
         return None
 
 
+_NO_SKILLS = Path("/dev/null")  # текст эпизода от признака «вызов скилла» не зависит
+
+
 def first_text(conversation: Conversation) -> str | None:
     """Очищенный текст первого эпизода беседы: то, что пользователь написал первым."""
-    episode = next(iter(conversations_to_episodes([conversation])), None)
+    episode = next(iter(conversations_to_episodes([conversation], skills_dir=_NO_SKILLS)), None)
     return episode.text if episode else None
 
 

@@ -6,7 +6,7 @@ from ai_retro.parsing.conversations import records_to_conversations
 from ai_retro.parsing.episodes import conversations_to_episodes
 from ai_retro.parsing.files import files_to_records, find_log_files
 from ai_retro.parsing.schemas import Conversation, EpisodeDraft
-from tests.conftest import user_line
+from tests.conftest import NO_SKILLS, user_line
 
 
 def test_files_to_records_skips_noise(logs_dir: Path) -> None:
@@ -26,7 +26,7 @@ def test_one_file_is_one_conversation(logs_dir: Path) -> None:
 
 def test_episodes_are_user_replies(logs_dir: Path) -> None:
     conversations = records_to_conversations(files_to_records(find_log_files(logs_dir)))
-    episodes = conversations_to_episodes(conversations)
+    episodes = conversations_to_episodes(conversations, skills_dir=NO_SKILLS)
     assert [e.uuid for e in episodes] == ["u1", "u2"]
     assert episodes[0].conversation_id == "s1"
     assert episodes[0].project == "/work/proj"
@@ -81,7 +81,7 @@ def _tool_result(uuid: str, minute: int, parent: str) -> str:
 
 def _episodes(project: Path) -> dict[str, EpisodeDraft]:
     conversations = records_to_conversations(files_to_records(find_log_files(project.parent)))
-    return {e.uuid: e for e in conversations_to_episodes(conversations)}
+    return {e.uuid: e for e in conversations_to_episodes(conversations, skills_dir=NO_SKILLS)}
 
 
 def _conversations(project: Path) -> list[Conversation]:
