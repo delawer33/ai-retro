@@ -27,6 +27,8 @@ from ai_retro.label.service import (
     save_label,
 )
 from ai_retro.llm import claude_version, make_claude_call
+from ai_retro.report.proposals import JSON_SCHEMA as PROPOSAL_SCHEMA
+from ai_retro.report.proposals import SYSTEM_PROMPT as PROPOSAL_PROMPT
 from ai_retro.report.service import (
     JSON_SCHEMA as REPORT_SCHEMA,
 )
@@ -151,11 +153,15 @@ def report_command(
         call = make_claude_call(
             system_prompt=REPORT_PROMPT, json_schema=REPORT_SCHEMA, model=settings.model
         )
+        proposal_call = make_claude_call(
+            system_prompt=PROPOSAL_PROMPT, json_schema=PROPOSAL_SCHEMA, model=settings.model
+        )
         engine = make_engine(settings.db_path)
         migrate(engine)
         data = run_report(
             engine,
             call,
+            proposal_call,
             output=output,
             since=since_dt,
             now=now,
