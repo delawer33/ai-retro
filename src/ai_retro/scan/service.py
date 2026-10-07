@@ -103,7 +103,19 @@ def scan(
                 )
             )
         )
-        todo = [d for d in drafts if d.uuid not in done]
+        for draft in drafts:
+            if draft.category is not None and draft.uuid not in done:
+                # Категория известна без модели: слэш-команда (суть — её имя).
+                session.add(
+                    ClassificationRow(
+                        episode_uuid=draft.uuid,
+                        category=draft.category,
+                        gist=draft.text.split(maxsplit=1)[0],
+                        classifier_version=classifier_version,
+                    )
+                )
+        session.commit()
+        todo = [d for d in drafts if d.uuid not in done and d.category is None]
         if announce is not None:
             announce(len(todo))
         classified = 0
