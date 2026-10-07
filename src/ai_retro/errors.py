@@ -44,3 +44,21 @@ class InvalidDomainRulesError(AiRetroError):
             f"Не понимаю правило области {part!r} в AI_RETRO_DOMAIN_RULES: "
             "ожидается «префикс=область», правила через «;», область из списка в CONTEXT.md."
         )
+
+
+class NoClassificationsError(AiRetroError):
+    def __init__(self) -> None:
+        super().__init__("Нет классификаций за период. Запусти `ai-retro scan`, затем повтори.")
+
+
+class InvalidReportPathError(AiRetroError):
+    def __init__(self, path: object) -> None:
+        super().__init__(
+            f"Отчёт нельзя писать в {path}: отчёт не правит CLAUDE.md и SKILL.md. "
+            "Укажи другой --output."
+        )
+
+
+class ReportWriteError(AiRetroError):
+    def __init__(self, path: object, reason: str) -> None:
+        super().__init__(f"Отчёт нельзя записать в {path}: {reason}. Укажи другой --output.")
