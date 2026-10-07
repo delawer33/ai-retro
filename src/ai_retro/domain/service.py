@@ -1,12 +1,16 @@
 """Область беседы: правила по пути, для scratch — модель по первой реплике."""
 
 import json
+import logging
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from ai_retro.classify.service import LOOP_MARKER
-from ai_retro.errors import InvalidDomainRulesError, ModelCallError
+from ai_retro.errors import InvalidDomainRulesError, ModelCallError, UnrecognizedModelError
 from ai_retro.llm import ModelCall
+from ai_retro.parsing.episodes import conversations_to_episodes
 from ai_retro.parsing.schemas import Conversation
 
 DOMAINS = ("работа", "личные проекты", "учёба", "идеи", "философия", "жизнь", "иное")
@@ -14,6 +18,8 @@ OTHER = "иное"
 # Беседы desktop-приложения без папки живут в каталоге с этим фрагментом пути.
 SCRATCH_MARKER = "Claude/scratch-workspaces/"
 FIRST_TEXT_LIMIT = 2000
+
+logger = logging.getLogger(__name__)
 
 # Страховка от петли (ADR 0002): тот же маркер, что у классификатора.
 SYSTEM_PROMPT = f"""{LOOP_MARKER}
@@ -67,16 +73,30 @@ def domain_by_model(call: ModelCall, first_text: str) -> str:
     return str(domain)
 
 
-def _domain_or_other(call: ModelCall, first_text: str) -> str:
-    """Сбой модели на одной беседе не валит скан: она получает «иное» и будет пересмотрена."""
+def _domain_or_none(call: ModelCall, first_text: str) -> str | None:
+    """Сбой модели на одной беседе не валит скан: None, беседа получит «иное» и будет пересмотрена.
+
+    Не опознанная модель — не сбой беседы: скан прерывается (`UnrecognizedModelError`).
+    """
     try:
         return domain_by_model(call, first_text)
-    except ModelCallError:
-        return OTHER
+    except UnrecognizedModelError:
+        raise
+    except ModelCallError as exc:
+        logger.warning("Область беседы не определена моделью, пока «иное»: %s", exc)
+        return None
 
 
-def _first_text(conversation: Conversation) -> str | None:
-    return next((r.text for r in conversation.records if r.text), None)
+def first_text(conversation: Conversation) -> str | None:
+    """Очищенный текст первого эпизода беседы: то, что пользователь написал первым."""
+    episode = next(iter(conversations_to_episodes([conversation])), None)
+    return episode.text if episode else None
+
+
+@dataclass(frozen=True)
+class DomainAssignment:
+    domains: dict[str, str]  # conversation_id → область
+    by_model: frozenset[str]  # беседы, область которых поставила модель
 
 
 def assign_domains(
@@ -85,23 +105,30 @@ def assign_domains(
     call: ModelCall | None,
     *,
     threads: int,
-) -> dict[str, str]:
-    """conversation_id → область. Модель зовётся только для scratch, раз на беседу."""
+    before_calls: Callable[[int], None] | None = None,
+) -> DomainAssignment:
+    """Модель зовётся только для scratch, раз на беседу; `before_calls(n)` — до первого вызова."""
     result: dict[str, str] = {}
     scratch: list[tuple[str, str]] = []
     for conv in conversations:
         project = conv.records[0].project
         if is_scratch(project):
-            text = _first_text(conv)
+            text = first_text(conv)
             if call is not None and text is not None:
                 scratch.append((conv.id, text))
                 continue
             result[conv.id] = OTHER
         else:
             result[conv.id] = domain_by_rules(project, rules) or OTHER
+    if before_calls is not None:
+        before_calls(len(scratch))
+    by_model: set[str] = set()
     if scratch and call is not None:
         model_call = call
         with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
-            answers = pool.map(lambda item: _domain_or_other(model_call, item[1]), scratch)
-            result.update({cid: d for (cid, _), d in zip(scratch, answers, strict=True)})
-    return result
+            answers = pool.map(lambda item: _domain_or_none(model_call, item[1]), scratch)
+            for (cid, _), domain in zip(scratch, answers, strict=True):
+                result[cid] = domain or OTHER
+                if domain is not None:
+                    by_model.add(cid)
+    return DomainAssignment(result, frozenset(by_model))

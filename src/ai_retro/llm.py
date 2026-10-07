@@ -6,7 +6,7 @@ import subprocess
 from collections.abc import Callable
 from typing import Any
 
-from ai_retro.errors import ClaudeNotFoundError, ModelCallError
+from ai_retro.errors import ClaudeNotFoundError, ModelCallError, UnrecognizedModelError
 
 # «промпт → ответ» (JSON-строка по схеме); передаётся сервисам явно.
 ModelCall = Callable[[str], str]
@@ -51,21 +51,32 @@ def make_claude_call(*, system_prompt: str, json_schema: dict[str, Any], model: 
         except subprocess.TimeoutExpired as exc:
             raise ModelCallError("Вызов `claude` завис: превышено время ожидания.") from exc
         if proc.returncode != 0:
+            _raise_if_unrecognized_model(proc.stdout + proc.stderr, model)
             raise ModelCallError(
                 f"`claude` завершился с кодом {proc.returncode}: {proc.stderr.strip()[:200]}"
             )
-        return _extract_payload(proc.stdout)
+        return _extract_payload(proc.stdout, model)
 
     return call
 
 
-def _extract_payload(stdout: str) -> str:
+_UNRECOGNIZED_MODEL_MARKERS = ("unrecognized_model", "issue with the selected model")
+
+
+def _raise_if_unrecognized_model(output: str, model: str) -> None:
+    lowered = output.lower()
+    if any(marker in lowered for marker in _UNRECOGNIZED_MODEL_MARKERS):
+        raise UnrecognizedModelError(model)
+
+
+def _extract_payload(stdout: str, model: str) -> str:
     try:
         envelope = json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise ModelCallError("`claude` вернул не JSON.") from exc
     if isinstance(envelope, dict):
         if envelope.get("is_error"):
+            _raise_if_unrecognized_model(json.dumps(envelope, ensure_ascii=False), model)
             raise ModelCallError(f"`claude` вернул ошибку: {str(envelope.get('result'))[:200]}")
         if envelope.get("structured_output") is not None:
             return json.dumps(envelope["structured_output"])

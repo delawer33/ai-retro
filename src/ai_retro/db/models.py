@@ -16,6 +16,8 @@ class EpisodeRow(Base):
     conversation_id: Mapped[str] = mapped_column(String, index=True)
     project: Mapped[str] = mapped_column(String)
     domain: Mapped[str | None] = mapped_column(String, nullable=True)
+    # область поставила модель (а не правила и не сбой): законное «иное» не переспрашивается
+    domain_by_model: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     text: Mapped[str] = mapped_column(Text)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
