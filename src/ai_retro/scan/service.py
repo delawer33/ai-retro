@@ -34,7 +34,7 @@ _UNITS = {"h": timedelta(hours=1), "d": timedelta(days=1), "w": timedelta(weeks=
 
 @dataclass(frozen=True)
 class Review:
-    """Итог пересмотра сохранённых эпизодов по текущим правилам фильтра (ADR 0010)."""
+    """Итог пересмотра сохранённых эпизодов по текущим правилам фильтра (ADR 0011)."""
 
     removed: int = 0
     updated: int = 0

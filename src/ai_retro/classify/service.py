@@ -134,7 +134,7 @@ def classify_many(
 def latest_classifications(
     session: Session, *, classifier_version: str | None = None
 ) -> dict[str, ClassificationRow]:
-    """Актуальная классификация каждого эпизода — последняя вставленная (ADR 0010).
+    """Актуальная классификация каждого эпизода — последняя вставленная (ADR 0013).
 
     Без `classifier_version` — среди всех версий; с ним — среди строк этой версии.
     """

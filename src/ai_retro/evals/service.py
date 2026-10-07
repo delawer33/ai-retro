@@ -104,7 +104,7 @@ def _model_categories(
         if (refresh or e.uuid not in categories) and not _is_bare_call(e)
     ]
     outcome = classify_many(call, todo, threads=threads)
-    # Одна строка на (эпизод, версия): прежнюю заменяем, а не дублируем (ADR 0010).
+    # Одна строка на (эпизод, версия): прежнюю заменяем, а не дублируем (ADR 0013).
     session.execute(
         delete(ClassificationRow).where(
             ClassificationRow.classifier_version == version,

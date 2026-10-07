@@ -124,7 +124,7 @@ def _linked_skill(calls: dict[str, list[tuple[datetime, str]]], episode: Episode
 
 
 def _existing_skill(name: str | None, project: str, skills_dir: Path) -> str | None:
-    """Цель-скилл только с SKILL.md на диске; иначе правила цели идут к CLAUDE.md (ADR 0010)."""
+    """Цель-скилл только с SKILL.md на диске; иначе правила цели идут к CLAUDE.md (ADR 0012)."""
     if name and skill_exists(name, project, skills_dir=skills_dir):
         return name
     return None

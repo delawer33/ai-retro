@@ -74,7 +74,7 @@ def conversations_to_episodes(
 
     У первой реплики после rewind — признак и контекст (начало брошенной ветки), иначе
     контекст — последний ответ агента. Слэш-команда без SKILL.md (`/compact`, `/model`…) —
-    обычная реплика без признака (ADR 0010).
+    обычная реплика без признака (ADR 0012).
     """
     drafts: list[EpisodeDraft] = []
     for conversation in conversations:
