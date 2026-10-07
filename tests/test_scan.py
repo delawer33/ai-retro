@@ -9,9 +9,15 @@ from typer.testing import CliRunner
 
 from ai_retro.classify.service import classify_episode
 from ai_retro.cli import app
-from ai_retro.db.models import ClassificationRow, EpisodeRow
+from ai_retro.db.models import (
+    ClassificationRow,
+    EpisodeRow,
+    GoldLabelRow,
+    GoldReturnedRow,
+    GoldSampleRow,
+)
 from ai_retro.errors import ModelCallError
-from ai_retro.scan.service import parse_since, scan
+from ai_retro.scan.service import Review, ScanResult, parse_since, scan
 from tests.conftest import NO_SKILLS, user_line
 
 
@@ -216,3 +222,135 @@ def test_cli_unrecognized_model_still_aborts(
     result = CliRunner().invoke(app, ["scan"])
     assert result.exit_code == 1
     assert "не опознана" in result.output
+
+
+def _scan(engine: Engine, model: FakeModel, logs: Path) -> ScanResult:
+    return scan(
+        engine,
+        model,
+        logs_dir=logs,
+        since=None,
+        threads=1,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
+    )
+
+
+def _stale(uuid: str, conversation_id: str = "s1") -> EpisodeRow:
+    return EpisodeRow(
+        uuid=uuid,
+        conversation_id=conversation_id,
+        project="/work/proj",
+        domain="иное",
+        timestamp=datetime(2026, 9, 25, 11, 0, tzinfo=UTC),
+        text="<local-command-stdout>x</local-command-stdout>",
+        signals=[],
+    )
+
+
+def test_scan_review_removes_junk_with_classification(engine: Engine, logs_dir: Path) -> None:
+    with Session(engine) as s:
+        s.add(_stale("junk"))
+        s.add(
+            ClassificationRow(
+                episode_uuid="junk", category="запрос", gist="g", classifier_version="v"
+            )
+        )
+        s.commit()
+    seen: list[Review] = []
+    model = FakeModel()
+    result = scan(
+        engine,
+        model,
+        logs_dir=logs_dir,
+        since=None,
+        threads=1,
+        classifier_version="v",
+        reviewed=seen.append,
+        skills_dir=NO_SKILLS,
+    )
+    assert (result.review.removed, result.review.removed_gold_labels) == (1, 0)
+    assert seen == [result.review]
+    with Session(engine) as s:
+        assert s.get(EpisodeRow, "junk") is None
+        assert not s.scalars(
+            select(ClassificationRow).where(ClassificationRow.episode_uuid == "junk")
+        ).all()
+
+
+def test_scan_review_removes_gold_rows(engine: Engine, logs_dir: Path) -> None:
+    with Session(engine) as s:
+        s.add(_stale("junk"))
+        s.flush()
+        s.add(
+            GoldLabelRow(
+                episode_uuid="junk",
+                category="запрос",
+                split="dev",
+                labeled_at=datetime(2026, 9, 26, tzinfo=UTC),
+            )
+        )
+        s.add(GoldSampleRow(episode_uuid="junk", split="dev"))
+        s.add(GoldReturnedRow(episode_uuid="junk"))
+        s.commit()
+    result = _scan(engine, FakeModel(), logs_dir)
+    assert result.review.removed_gold_labels == 1
+    for table in (GoldLabelRow, GoldSampleRow, GoldReturnedRow):
+        assert _count(engine, table) == 0
+
+
+def test_scan_review_updates_changed_episode_keeps_classification(
+    engine: Engine, logs_dir: Path
+) -> None:
+    model = FakeModel()
+    _scan(engine, model, logs_dir)
+    with Session(engine) as s:
+        row = s.get(EpisodeRow, "u2")
+        assert row is not None
+        row.text = "старый текст"
+        s.commit()
+    result = _scan(engine, model, logs_dir)
+    assert (result.review.removed, result.review.updated) == (0, 1)
+    assert len(model.calls) == 2
+    with Session(engine) as s:
+        row = s.get(EpisodeRow, "u2")
+        assert row is not None
+        assert row.text == "не так, я же просил Y"
+    assert _count(engine, ClassificationRow) == 2
+
+
+def test_scan_review_noop_on_repeat(engine: Engine, logs_dir: Path) -> None:
+    model = FakeModel()
+    _scan(engine, model, logs_dir)
+    result = _scan(engine, model, logs_dir)
+    assert (result.review.removed, result.review.updated) == (0, 0)
+    assert len(model.calls) == 2
+
+
+def test_scan_review_leaves_conversations_outside_window(engine: Engine, logs_dir: Path) -> None:
+    with Session(engine) as s:
+        s.add(_stale("junk"))
+        s.commit()
+    since = datetime(2026, 10, 1, tzinfo=UTC)
+    result = scan(
+        engine,
+        FakeModel(),
+        logs_dir=logs_dir,
+        since=since,
+        threads=1,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
+    )
+    assert result.review.removed == 0
+    assert _count(engine, EpisodeRow) == 1
+
+
+def test_cli_scan_prints_review(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, logs_dir: Path
+) -> None:
+    monkeypatch.setenv("AI_RETRO_LOGS_DIR", str(logs_dir))
+    monkeypatch.setenv("AI_RETRO_DB_PATH", str(tmp_path / "db" / "x.db"))
+    monkeypatch.setattr("ai_retro.llm.shutil.which", lambda _: "/usr/bin/claude")
+    monkeypatch.setattr("ai_retro.cli.make_claude_call", lambda **_: FakeModel())
+    result = CliRunner().invoke(app, ["scan"])
+    assert "Пересмотр: удалено 0 эпизодов, обновлено 0" in result.output

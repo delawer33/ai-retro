@@ -39,7 +39,7 @@ from ai_retro.report.service import (
     check_report_path,
     run_report,
 )
-from ai_retro.scan.service import parse_since, scan
+from ai_retro.scan.service import Review, parse_since, scan
 
 app = typer.Typer(no_args_is_help=True, help="Анализ сессий Claude Code.")
 
@@ -47,6 +47,12 @@ app = typer.Typer(no_args_is_help=True, help="Анализ сессий Claude C
 @app.callback()
 def main() -> None:
     """Анализ сессий Claude Code и поиск повторяющихся паттернов."""
+
+
+def _echo_review(review: Review) -> None:
+    typer.echo(f"Пересмотр: удалено {review.removed} эпизодов, обновлено {review.updated}")
+    if review.removed_gold_labels:
+        typer.echo(f"Вместе с эпизодами удалено меток эталона: {review.removed_gold_labels}")
 
 
 @app.command("scan")
@@ -78,6 +84,7 @@ def scan_command(
             announce=lambda n: typer.echo(f"Вызовов к модели (эпизоды и области): {n}"),
             domain_rules=domain_rules,
             domain_call=domain_call,
+            reviewed=_echo_review,
         )
     except AiRetroError as exc:
         typer.echo(f"Ошибка: {exc}", err=True)
