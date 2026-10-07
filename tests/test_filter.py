@@ -80,7 +80,8 @@ def test_only_user_written_text_is_episode(tmp_path: Path) -> None:
         ("u1", "обычная реплика"),
         ("u2", "/plain перепиши текст"),
     ]
-    assert [e.category for e in episodes] == [None, "вызов скилла"]
+    assert [(e.category, e.skill) for e in episodes] == [(None, None), (None, "plain")]
+    assert episodes[1].signals == ("вызов скилла",)
 
 
 def test_reminder_block_before_user_text_keeps_reply(tmp_path: Path) -> None:
@@ -229,12 +230,15 @@ def test_clean_reply_per_block_kind() -> None:
     assert clean_reply("[Request interrupted by user]").is_interrupt
 
 
-def test_scan_skill_call_skips_model_and_stores_signals(engine: Engine, tmp_path: Path) -> None:
-    command = "<command-name>/plain</command-name>\n<command-args>a</command-args>"
-    lines = [
+def _skill_lines(args: str) -> list[str]:
+    command = f"<command-name>/plain</command-name>\n<command-args>{args}</command-args>"
+    return [
         _blocks("i1", 0, [{"type": "text", "text": "[Request interrupted by user]"}]),
         user_line("u1", command, _ts(1)),
     ]
+
+
+def test_scan_bare_skill_call_is_neutral_without_model(engine: Engine, tmp_path: Path) -> None:
     calls: list[str] = []
 
     def call(prompt: str) -> str:
@@ -244,7 +248,7 @@ def test_scan_skill_call_skips_model_and_stores_signals(engine: Engine, tmp_path
     result = scan(
         engine,
         call,
-        logs_dir=_write(tmp_path, lines),
+        logs_dir=_write(tmp_path, _skill_lines("")),
         since=None,
         threads=1,
         classifier_version="v",
@@ -253,8 +257,29 @@ def test_scan_skill_call_skips_model_and_stores_signals(engine: Engine, tmp_path
     with Session(engine) as s:
         episode = s.scalars(select(EpisodeRow)).one()
         row = s.scalars(select(ClassificationRow)).one()
-    assert episode.signals == ["прерывание"]
-    assert (row.category, row.gist) == ("вызов скилла", "/plain")
+    assert episode.signals == ["прерывание", "вызов скилла"]
+    assert episode.skill == "plain"
+    assert row.category == "нейтрально"
+
+
+def test_scan_skill_call_with_args_sends_only_arguments(engine: Engine, tmp_path: Path) -> None:
+    prompts: list[str] = []
+
+    def call(prompt: str) -> str:
+        prompts.append(prompt)
+        return json.dumps({"category": "инструкция", "gist": "не писать доки"})
+
+    logs = _write(tmp_path, _skill_lines("не пиши доки, только структура"))
+    result = scan(engine, call, logs_dir=logs, since=None, threads=1, classifier_version="v")
+    assert result.classified == 1
+    (prompt,) = prompts
+    assert prompt.endswith("Реплика пользователя:\nне пиши доки, только структура")
+    assert "/plain" not in prompt
+    assert "вызов скилла" in prompt  # признак виден модели
+    again = scan(engine, call, logs_dir=logs, since=None, threads=1, classifier_version="v")
+    assert (again.classified, len(prompts)) == (0, 1)
+    with Session(engine) as s:
+        assert s.scalars(select(EpisodeRow)).one().skill == "plain"
 
 
 def test_scan_classifier_context_has_marker(engine: Engine, tmp_path: Path) -> None:

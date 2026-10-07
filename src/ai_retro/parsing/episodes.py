@@ -9,7 +9,8 @@ from ai_retro.parsing.schemas import Conversation, EpisodeDraft, Record, Rewind
 REWIND = "rewind"
 SIGNAL_INTERRUPT = "прерывание"
 SIGNAL_REJECTION = "отказ"
-SKILL_CALL = "вызов скилла"
+SIGNAL_SKILL = "вызов скилла"
+NEUTRAL = "нейтрально"
 # Вариант «… for tool use» — эхо отказа; сам по себе не реплика и не признак.
 INTERRUPT_MARKER = "[Request interrupted by user]"
 _CONTEXT_LIMIT = 1000
@@ -87,6 +88,13 @@ def conversations_to_episodes(conversations: Iterable[Conversation]) -> list[Epi
             rewind = rewinds.get(record.uuid)
             if rewind is not None:
                 _add(pending, REWIND)
+            skill: str | None = None
+            category: str | None = None
+            if record.is_command:
+                skill = record.text.split(maxsplit=1)[0].lstrip("/")
+                _add(pending, SIGNAL_SKILL)
+                if not skill_arguments(record.text):
+                    category = NEUTRAL  # голый вызов в модель не идёт (ADR 0004)
             drafts.append(
                 EpisodeDraft(
                     uuid=record.uuid,
@@ -96,11 +104,18 @@ def conversations_to_episodes(conversations: Iterable[Conversation]) -> list[Epi
                     text=record.text,
                     context=_rewind_context(rewind) if rewind else last_reply,
                     signals=tuple(pending),
-                    category=SKILL_CALL if record.is_command else None,
+                    category=category,
+                    skill=skill,
                 )
             )
             pending = []
     return drafts
+
+
+def skill_arguments(text: str) -> str:
+    """Аргументы слэш-команды из текста эпизода «/имя аргументы»; пусто — голый вызов."""
+    parts = text.split(maxsplit=1)
+    return parts[1] if len(parts) == 2 else ""
 
 
 def _add(signals: list[str], signal: str) -> None:
@@ -123,4 +138,13 @@ def _clip(text: str | None) -> str:
     return text if len(text) <= _CONTEXT_LIMIT else text[:_CONTEXT_LIMIT] + "…"
 
 
-__all__ = ["REWIND", "CleanedReply", "Record", "clean_reply", "conversations_to_episodes"]
+__all__ = [
+    "NEUTRAL",
+    "REWIND",
+    "SIGNAL_SKILL",
+    "CleanedReply",
+    "Record",
+    "clean_reply",
+    "conversations_to_episodes",
+    "skill_arguments",
+]

@@ -103,7 +103,8 @@ def test_agreement_and_deltas() -> None:
 
 
 def test_baseline() -> None:
-    assert baseline_category("/commit", []) == "вызов скилла"
+    assert baseline_category("/commit", ["вызов скилла"]) == "нейтрально"
+    assert baseline_category("/commit нет, не так", ["вызов скилла"]) == "поправка"
     assert baseline_category("нет, не так", []) == "поправка"
     assert baseline_category("сделай Y", ["отказ"]) == "поправка"
     assert baseline_category("всегда пиши тесты", []) == "инструкция"

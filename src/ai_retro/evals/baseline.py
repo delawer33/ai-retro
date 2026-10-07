@@ -2,6 +2,8 @@
 
 import re
 
+from ai_retro.parsing.episodes import NEUTRAL, SIGNAL_SKILL, skill_arguments
+
 _CORRECTION = re.compile(
     r"\b(нет,|не так|не то|неправильно|неверно|ошибк\w*|я же (просил|говорил|писал)|"
     r"опять|снова|зачем ты|почему ты|верни|откати|сломал\w*|не надо|не нужно)",
@@ -19,8 +21,10 @@ _CORRECTION_SIGNALS = {"прерывание", "отказ"}
 
 
 def baseline_category(text: str, signals: list[str]) -> str:
-    if text.lstrip().startswith("/"):
-        return "вызов скилла"
+    if SIGNAL_SKILL in signals:
+        text = skill_arguments(text)  # команда — признак, оценивается реплика-аргумент
+        if not text:
+            return NEUTRAL
     if _CORRECTION_SIGNALS & set(signals) or _CORRECTION.search(text):
         return "поправка"
     if _INSTRUCTION.search(text):

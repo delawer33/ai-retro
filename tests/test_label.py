@@ -7,6 +7,7 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 from typer.testing import CliRunner
 
+from ai_retro.classify.service import CATEGORIES
 from ai_retro.cli import app
 from ai_retro.db.models import ClassificationRow, EpisodeRow, GoldLabelRow
 from ai_retro.errors import LabelExistsError
@@ -152,6 +153,16 @@ def test_render_has_no_model_label() -> None:
     assert "rewind" in out
 
 
+def test_render_shows_skill_name() -> None:
+    item = LabelItem("u", "/feat кнопка", None, ("вызов скилла",), skill="feat")
+    assert "вызов скилла /feat" in render_item(item, number=1, total=1)
+
+
+def test_categories_have_no_skill_call() -> None:
+    assert "вызов скилла" not in CATEGORIES
+    assert len(CATEGORIES) == 4
+
+
 @pytest.fixture
 def cli_env(engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Engine:
     _fill(engine)
@@ -172,7 +183,7 @@ def test_cli_label_scripted_input_and_resume(cli_env: Engine) -> None:
     labels = _labels(cli_env)
     assert [x.category for x in labels] == ["поправка", "запрос"]
     # skipped episode comes first on resume
-    result = runner.invoke(app, ["label"], input="5q")
+    result = runner.invoke(app, ["label"], input="4q")
     assert result.exit_code == 0, result.output
     assert len(_labels(cli_env)) == 3
 

@@ -10,8 +10,15 @@ from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
 from ai_retro.classify.service import CATEGORIES
-from ai_retro.db.models import ClassificationRow, EpisodeRow, GoldLabelRow, GoldSampleRow
+from ai_retro.db.models import (
+    ClassificationRow,
+    EpisodeRow,
+    GoldLabelRow,
+    GoldReturnedRow,
+    GoldSampleRow,
+)
 from ai_retro.errors import LabelExistsError
+from ai_retro.parsing.episodes import SIGNAL_SKILL
 
 SAMPLE_SIZE = 100
 RELABEL_SIZE = 20
@@ -39,6 +46,7 @@ class LabelItem:
     text: str
     context: str | None
     signals: tuple[str, ...]
+    skill: str | None = None
 
 
 def _order_key(uuid: str) -> str:
@@ -143,6 +151,7 @@ def _item(episode: EpisodeRow) -> LabelItem:
         text=episode.text,
         context=episode.context,
         signals=tuple(episode.signals),
+        skill=episode.skill,
     )
 
 
@@ -160,6 +169,19 @@ def pending_items(engine: Engine) -> list[LabelItem]:
             .order_by(GoldSampleRow.id)
         ).all()
         return [_item(e) for s, e in rows if s.episode_uuid not in done]
+
+
+def returned_count(engine: Engine) -> int:
+    """Сколько эпизодов вернула в разметку миграция эталона (ADR 0004) и они ещё не размечены."""
+    with Session(engine) as session:
+        done = set(
+            session.scalars(
+                select(GoldLabelRow.episode_uuid).where(GoldLabelRow.is_relabel.is_(False))
+            )
+        )
+        return sum(
+            1 for u in session.scalars(select(GoldReturnedRow.episode_uuid)) if u not in done
+        )
 
 
 def pending_relabel_items(engine: Engine, *, size: int = RELABEL_SIZE) -> list[LabelItem]:
@@ -218,7 +240,10 @@ def save_label(engine: Engine, uuid: str, category: str, *, relabel: bool, now: 
 def render_item(item: LabelItem, *, number: int, total: int) -> str:
     lines = [f"--- Эпизод {number}/{total} ---"]
     if item.signals:
-        lines.append("Признаки: " + ", ".join(item.signals))
+        shown = [
+            f"{s} /{item.skill}" if s == SIGNAL_SKILL and item.skill else s for s in item.signals
+        ]
+        lines.append("Признаки: " + ", ".join(shown))
     if item.context:
         lines.append("Контекст (ответ агента / начало брошенной ветки):")
         lines.append(item.context)

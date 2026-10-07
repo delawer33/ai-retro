@@ -18,7 +18,7 @@ from ai_retro.domain.service import OTHER, assign_domains, is_scratch
 from ai_retro.errors import InvalidSinceError, LogsDirNotFoundError
 from ai_retro.llm import ModelCall
 from ai_retro.parsing.conversations import records_to_conversations
-from ai_retro.parsing.episodes import conversations_to_episodes
+from ai_retro.parsing.episodes import conversations_to_episodes, skill_arguments
 from ai_retro.parsing.files import files_to_records, find_log_files
 from ai_retro.parsing.schemas import EpisodeDraft
 
@@ -92,6 +92,7 @@ def scan(
                     text=draft.text,
                     context=draft.context,
                     signals=list(draft.signals),
+                    skill=draft.skill,
                 )
             )
         session.commit()
@@ -105,12 +106,12 @@ def scan(
         )
         for draft in drafts:
             if draft.category is not None and draft.uuid not in done:
-                # Категория известна без модели: слэш-команда (суть — её имя).
+                # Категория известна без модели: голый вызов скилла.
                 session.add(
                     ClassificationRow(
                         episode_uuid=draft.uuid,
                         category=draft.category,
-                        gist=draft.text.split(maxsplit=1)[0],
+                        gist="",
                         classifier_version=classifier_version,
                     )
                 )
@@ -146,7 +147,8 @@ def _episode_input(draft: EpisodeDraft) -> EpisodeInput:
     # иначе — последний ответ агента перед репликой.
     rewind = "rewind" in draft.signals
     return EpisodeInput(
-        text=draft.text,
+        # У вызова скилла в модель идут только аргументы: команда — в признаке.
+        text=skill_arguments(draft.text) if draft.skill else draft.text,
         signals=draft.signals,
         agent_reply=None if rewind else draft.context,
         abandoned_branch=draft.context if rewind else None,
