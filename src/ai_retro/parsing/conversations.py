@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 from collections.abc import Iterable
+from dataclasses import replace
 
 from ai_retro.parsing.schemas import Conversation, Record, Rewind
 
@@ -95,13 +96,19 @@ def _detect_rewind(
 
 
 def _branch_start(abandoned: list[Record]) -> tuple[Record, ...]:
-    """Исходная реплика брошенной ветки и первый ответ агента с текстом."""
+    """Исходная реплика брошенной ветки и ответ агента на неё.
+
+    Ответ — склейка текстовых блоков агента до следующей реплики пользователя: первый блок
+    часто лишь преамбула перед вызовами инструментов.
+    """
     start = next(i for i, r in enumerate(abandoned) if r.kind == "user" and r.text is not None)
-    reply = None
+    replies: list[Record] = []
     for r in abandoned[start + 1 :]:
         if r.kind == "user" and r.text is not None:
             break
         if r.kind == "assistant" and r.agent_text is not None:
-            reply = r
-            break
-    return (abandoned[start],) if reply is None else (abandoned[start], reply)
+            replies.append(r)
+    if not replies:
+        return (abandoned[start],)
+    joined = "\n".join(r.agent_text for r in replies if r.agent_text)
+    return (abandoned[start], replace(replies[0], agent_text=joined))

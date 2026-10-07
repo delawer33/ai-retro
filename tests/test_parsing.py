@@ -122,6 +122,36 @@ def test_rewind_into_new_file(tmp_path: Path) -> None:
     assert episodes["u2"].context == "ответ один"  # не rewind: последний ответ агента
 
 
+def test_rewind_context_skips_one_line_preamble(tmp_path: Path) -> None:
+    project = tmp_path / "logs" / "-p"
+    tool = [{"type": "tool_use", "id": "t", "name": "Read", "input": {}}]
+    _write(
+        project / "old.jsonl",
+        [
+            _u("u1", "первая", 0, None),
+            _a("a1", "ответ один", 0, "u1"),
+            _u("u2", "старая вторая", 1, "a1"),
+            _a("a2", "Посмотрю журнал прогона.", 1, "u2"),
+            _a("a3", "", 1, "a2", blocks=tool),
+            _tool_result("t1", 2, "a3"),
+            _a("a4", "В журнале видно: упал шаг сборки из-за версии.", 2, "t1"),
+            _u("u3", "старая третья", 3, "a4"),
+        ],
+    )
+    _write(
+        project / "new.jsonl",
+        [
+            _u("u1", "первая", 0, None),
+            _a("a1", "ответ один", 0, "u1"),
+            _u("n2", "новая вторая", 5, "a1"),
+        ],
+    )
+    context = _episodes(project)["n2"].context or ""
+    assert "Посмотрю журнал прогона." in context
+    assert "упал шаг сборки из-за версии" in context
+    assert "старая третья" not in context
+
+
 def test_chain_of_two_rewinds(tmp_path: Path) -> None:
     project = tmp_path / "logs" / "-p"
     _write(
