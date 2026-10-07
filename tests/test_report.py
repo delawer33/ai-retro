@@ -28,6 +28,7 @@ from ai_retro.report.service import (
     write_report,
 )
 from ai_retro.report.text import PASTE_MARKER, mask_pastes
+from tests.conftest import NO_SKILLS, make_skill
 
 NOW = datetime(2026, 10, 4, tzinfo=UTC)
 VERSION = "v1"
@@ -91,6 +92,7 @@ def test_group_from_one_conversation_is_not_a_pattern(engine: Engine) -> None:
         since=None,
         now=NOW,
         classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     assert data.patterns == ()
 
@@ -104,6 +106,7 @@ def test_group_of_two_episodes_is_not_a_pattern(engine: Engine) -> None:
         since=None,
         now=NOW,
         classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     assert data.patterns == ()
     with Session(engine) as s:
@@ -116,7 +119,13 @@ def test_pattern_saved_and_only_correction_and_instruction_grouped(engine: Engin
     seed(engine, rows)
     call = groups_call(("Не писать X", [0, 1, 2, 7, 0]))
     data = build_report(
-        engine, call, proposal_call(), since=None, now=NOW, classifier_version=VERSION
+        engine,
+        call,
+        proposal_call(),
+        since=None,
+        now=NOW,
+        classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     assert len(call.calls) == 1
     assert "сделай Y" not in call.calls[0]
@@ -140,6 +149,7 @@ def test_render_has_all_sections(engine: Engine) -> None:
         since=None,
         now=NOW,
         classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     md = render_report(data)
     assert "## Категории по областям" in md
@@ -170,7 +180,13 @@ def test_pastes_shown_as_marker() -> None:
 def test_no_classifications_raises(engine: Engine) -> None:
     with pytest.raises(NoClassificationsError, match="scan"):
         build_report(
-            engine, groups_call(), proposal_call(), since=None, now=NOW, classifier_version=VERSION
+            engine,
+            groups_call(),
+            proposal_call(),
+            since=None,
+            now=NOW,
+            classifier_version=VERSION,
+            skills_dir=NO_SKILLS,
         )
 
 
@@ -248,6 +264,7 @@ def test_bad_output_path_costs_no_model_call_and_saves_no_patterns(
                 since=None,
                 now=NOW,
                 classifier_version=VERSION,
+                skills_dir=NO_SKILLS,
             )
         assert call.calls == []
         with Session(engine) as s:
@@ -266,6 +283,7 @@ def test_run_report_writes_file(engine: Engine, tmp_path: Path) -> None:
         since=None,
         now=NOW,
         classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     assert "### Не писать X" in out.read_text(encoding="utf-8")
 
@@ -350,12 +368,26 @@ def seed_skill_conversation(engine: Engine) -> None:
         s.commit()
 
 
-def test_episode_after_skill_call_is_linked_to_skill(engine: Engine) -> None:
+def test_episode_after_skill_call_is_linked_to_skill(engine: Engine, tmp_path: Path) -> None:
     seed_skill_conversation(engine)
     rows = [(f"e{i}", "c0" if i < 2 else "c1", "поправка", "не пиши X", f"t{i}") for i in range(3)]
     seed(engine, rows)
-    items, _ = load_report_data(engine, since=None, classifier_version=VERSION)
+    skills = make_skill(tmp_path / "skills", "feat")
+    items, _ = load_report_data(engine, since=None, classifier_version=VERSION, skills_dir=skills)
     assert [i.skill for i in items] == ["feat", "feat", None]
+
+
+def test_skill_missing_on_disk_is_not_a_target(engine: Engine, tmp_path: Path) -> None:
+    seed_skill_conversation(engine)
+    rows = [(f"e{i}", "c0", "поправка", "не пиши X", f"t{i}") for i in range(3)]
+    seed(engine, rows)
+    items, _ = load_report_data(
+        engine, since=None, classifier_version=VERSION, skills_dir=tmp_path / "empty"
+    )
+    assert [i.skill for i in items] == [None, None, None]
+    target = choose_target(pattern_of(*items))
+    assert target.kind == TARGET_PROJECT
+    assert target.file.endswith("CLAUDE.md")
 
 
 def test_proposal_saved_as_proposed_and_matches_report(engine: Engine, tmp_path: Path) -> None:
@@ -370,6 +402,7 @@ def test_proposal_saved_as_proposed_and_matches_report(engine: Engine, tmp_path:
         since=None,
         now=NOW,
         classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     with Session(engine) as s:
         (row,) = s.scalars(select(ProposalRow)).all()
@@ -398,6 +431,7 @@ def test_new_skill_proposal_has_no_target_file(engine: Engine, tmp_path: Path) -
         since=None,
         now=NOW,
         classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     with Session(engine) as s:
         (row,) = s.scalars(select(ProposalRow)).all()
@@ -416,6 +450,7 @@ def test_proposal_prompt_names_target_file(engine: Engine) -> None:
         since=None,
         now=NOW,
         classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     assert len(pc.calls) == 1
     assert "/work/proj/CLAUDE.md" in pc.calls[0]
@@ -432,6 +467,7 @@ def test_second_report_reuses_stored_proposal(engine: Engine) -> None:
             since=None,
             now=NOW,
             classifier_version=VERSION,
+            skills_dir=NO_SKILLS,
         )
     (pattern,) = data.patterns
     assert pattern.proposal is not None
@@ -452,6 +488,7 @@ def test_bad_proposal_answer_is_model_call_error(engine: Engine) -> None:
             since=None,
             now=NOW,
             classifier_version=VERSION,
+            skills_dir=NO_SKILLS,
         )
     with Session(engine) as s:
         assert s.scalars(select(PatternRow)).all() == []
@@ -490,6 +527,7 @@ def test_proposal_never_touches_target_files(engine: Engine, tmp_path: Path) -> 
         since=None,
         now=NOW,
         classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
     )
     assert claude_md.read_text(encoding="utf-8") == "исходный"
 
@@ -503,7 +541,9 @@ def test_report_counts_episode_with_two_versions_once_by_new_one(engine: Engine)
             )
         )
         s.commit()
-    items, distribution = load_report_data(engine, since=None, classifier_version="v2")
+    items, distribution = load_report_data(
+        engine, since=None, skills_dir=NO_SKILLS, classifier_version="v2"
+    )
     assert sum(sum(by_cat.values()) for by_cat in distribution.values()) == 1
     assert [(i.category, i.gist) for i in items] == [("поправка", "новая")]
 
@@ -517,6 +557,8 @@ def test_report_counts_same_version_duplicate_once(engine: Engine) -> None:
             )
         )
         s.commit()
-    items, distribution = load_report_data(engine, since=None, classifier_version=VERSION)
+    items, distribution = load_report_data(
+        engine, since=None, skills_dir=NO_SKILLS, classifier_version=VERSION
+    )
     assert sum(sum(by_cat.values()) for by_cat in distribution.values()) == 1
     assert [i.gist for i in items] == ["новая"]

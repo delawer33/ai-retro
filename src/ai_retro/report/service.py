@@ -18,6 +18,7 @@ from ai_retro.errors import (
     ReportWriteError,
 )
 from ai_retro.llm import ModelCall
+from ai_retro.parsing.skills import skill_exists
 from ai_retro.report.proposals import generate_proposal, render_proposal
 from ai_retro.report.schemas import GistItem, Pattern, Proposal, ReportData
 from ai_retro.report.text import example_text
@@ -60,7 +61,7 @@ JSON_SCHEMA = {
 
 
 def load_report_data(
-    engine: Engine, *, since: datetime | None, classifier_version: str
+    engine: Engine, *, since: datetime | None, classifier_version: str, skills_dir: Path
 ) -> tuple[list[GistItem], dict[str, dict[str, int]]]:
     """Классифицированные эпизоды периода: (кандидаты в паттерны, распределение по областям)."""
     stmt = select(EpisodeRow).order_by(EpisodeRow.timestamp, EpisodeRow.uuid)
@@ -89,7 +90,9 @@ def load_report_data(
                         gist=cls.gist,
                         text=episode.text,
                         timestamp=episode.timestamp,
-                        skill=_linked_skill(skill_calls, episode),
+                        skill=_existing_skill(
+                            _linked_skill(skill_calls, episode), episode.project, skills_dir
+                        ),
                     )
                 )
     if not distribution:
@@ -118,6 +121,13 @@ def _linked_skill(calls: dict[str, list[tuple[datetime, str]]], episode: Episode
     when = _utc(episode.timestamp)
     earlier = [skill for ts, skill in calls.get(episode.conversation_id, []) if ts < when]
     return earlier[-1] if earlier else None
+
+
+def _existing_skill(name: str | None, project: str, skills_dir: Path) -> str | None:
+    """Цель-скилл только с SKILL.md на диске; иначе правила цели идут к CLAUDE.md (ADR 0010)."""
+    if name and skill_exists(name, project, skills_dir=skills_dir):
+        return name
+    return None
 
 
 def _utc(value: datetime) -> datetime:
@@ -219,9 +229,10 @@ def build_report(
     since: datetime | None,
     now: datetime,
     classifier_version: str,
+    skills_dir: Path,
 ) -> ReportData:
     items, distribution = load_report_data(
-        engine, since=since, classifier_version=classifier_version
+        engine, since=since, classifier_version=classifier_version, skills_dir=skills_dir
     )
     patterns = with_proposals(engine, proposal_call, group_gists(call, items))
     save_patterns(engine, patterns, now=now)
@@ -334,11 +345,18 @@ def run_report(
     since: datetime | None,
     now: datetime,
     classifier_version: str,
+    skills_dir: Path,
 ) -> ReportData:
     """Проверка пути, паттерны, отчёт. Неверный путь не стоит ни вызова модели, ни паттернов."""
     check_report_path(output)
     data = build_report(
-        engine, call, proposal_call, since=since, now=now, classifier_version=classifier_version
+        engine,
+        call,
+        proposal_call,
+        since=since,
+        now=now,
+        classifier_version=classifier_version,
+        skills_dir=skills_dir,
     )
     write_report(output, render_report(data))
     return data

@@ -22,6 +22,7 @@ from ai_retro.config import Settings
 from ai_retro.db.models import ClassificationRow
 from ai_retro.errors import UnrecognizedModelError
 from ai_retro.scan.service import scan
+from tests.conftest import NO_SKILLS
 
 from .conftest import user_line
 
@@ -118,7 +119,15 @@ def test_scan_saves_processed_then_raises(engine: Engine, logs_dir: Path) -> Non
         return OK
 
     with pytest.raises(UnrecognizedModelError):
-        scan(engine, call, logs_dir=logs_dir, since=None, threads=1, classifier_version="v1")
+        scan(
+            engine,
+            call,
+            logs_dir=logs_dir,
+            since=None,
+            threads=1,
+            classifier_version="v1",
+            skills_dir=NO_SKILLS,
+        )
     with Session(engine) as s:
         rows = s.scalars(select(ClassificationRow)).all()
     assert [(r.episode_uuid, r.classifier_version) for r in rows] == [("u1", "v1")]
@@ -131,7 +140,15 @@ def test_scan_gives_agent_reply_as_context(engine: Engine, logs_dir: Path) -> No
         prompts.append(prompt)
         return OK
 
-    scan(engine, call, logs_dir=logs_dir, since=None, threads=1, classifier_version="v")
+    scan(
+        engine,
+        call,
+        logs_dir=logs_dir,
+        since=None,
+        threads=1,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
+    )
     second = next(p for p in prompts if "я же просил" in p)
     assert "Последний ответ агента перед репликой:\nok" in second
 
@@ -151,6 +168,7 @@ def test_scan_announces_count_before_first_call(engine: Engine, logs_dir: Path) 
         threads=1,
         classifier_version="v",
         announce=lambda n: events.append(f"announce {n}"),
+        skills_dir=NO_SKILLS,
     )
     assert events[0] == "announce 2"
     assert events.count("call") == 2
@@ -167,7 +185,15 @@ def test_scan_skips_conversation_with_loop_marker(engine: Engine, logs_dir: Path
         calls.append(prompt)
         return OK
 
-    result = scan(engine, call, logs_dir=logs_dir, since=None, threads=1, classifier_version="v")
+    result = scan(
+        engine,
+        call,
+        logs_dir=logs_dir,
+        since=None,
+        threads=1,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
+    )
     assert result.found == 2
     assert not any(LOOP_MARKER in p for p in calls)
 

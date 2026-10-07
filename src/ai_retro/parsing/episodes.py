@@ -3,8 +3,10 @@
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 
 from ai_retro.parsing.schemas import Conversation, EpisodeDraft, Record, Rewind
+from ai_retro.parsing.skills import skill_exists
 
 REWIND = "rewind"
 SIGNAL_INTERRUPT = "прерывание"
@@ -65,11 +67,14 @@ def _mask_pastes(text: str) -> str:
     return _PASTE.sub(lambda m: f"[вставка {len(m.group(1))} символов]", text)
 
 
-def conversations_to_episodes(conversations: Iterable[Conversation]) -> list[EpisodeDraft]:
+def conversations_to_episodes(
+    conversations: Iterable[Conversation], *, skills_dir: Path
+) -> list[EpisodeDraft]:
     """Эпизод — реплика пользователя; прерывание и отказ без текста уходят признаком в следующий.
 
     У первой реплики после rewind — признак и контекст (начало брошенной ветки), иначе
-    контекст — последний ответ агента.
+    контекст — последний ответ агента. Слэш-команда без SKILL.md (`/compact`, `/model`…) —
+    обычная реплика без признака (ADR 0010).
     """
     drafts: list[EpisodeDraft] = []
     for conversation in conversations:
@@ -90,8 +95,9 @@ def conversations_to_episodes(conversations: Iterable[Conversation]) -> list[Epi
                 _add(pending, REWIND)
             skill: str | None = None
             category: str | None = None
-            if record.is_command:
-                skill = record.text.split(maxsplit=1)[0].lstrip("/")
+            name = record.text.split(maxsplit=1)[0].lstrip("/") if record.is_command else ""
+            if name and skill_exists(name, record.project, skills_dir=skills_dir):
+                skill = name
                 _add(pending, SIGNAL_SKILL)
                 if not skill_arguments(record.text):
                     category = NEUTRAL  # голый вызов в модель не идёт (ADR 0004)

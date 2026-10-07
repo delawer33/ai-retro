@@ -52,6 +52,7 @@ def scan(
     announce: Callable[[int], None] | None = None,
     domain_rules: list[tuple[Path, str]] | None = None,
     domain_call: ModelCall | None = None,
+    skills_dir: Path,
 ) -> ScanResult:
     if not logs_dir.is_dir():
         raise LogsDirNotFoundError(logs_dir)
@@ -63,7 +64,7 @@ def scan(
     ]
     drafts = [
         d
-        for d in conversations_to_episodes(conversations)
+        for d in conversations_to_episodes(conversations, skills_dir=skills_dir)
         if since is None or d.timestamp.astimezone(UTC) >= since
     ]
 

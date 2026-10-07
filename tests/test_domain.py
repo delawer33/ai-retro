@@ -15,7 +15,7 @@ from ai_retro.domain.service import (
 )
 from ai_retro.errors import InvalidDomainRulesError, ModelCallError, UnrecognizedModelError
 from ai_retro.scan.service import scan
-from tests.conftest import user_line
+from tests.conftest import NO_SKILLS, user_line
 
 HOME = Path("/home/u")
 RAW = "all/coll=учёба;all/projects=личные проекты;Documents/avito=работа"
@@ -48,6 +48,7 @@ def _scan(engine: Engine, logs: Path, model: DomainModel) -> None:
         classifier_version="v",
         domain_rules=parse_rules(RAW, home=HOME),
         domain_call=model,
+        skills_dir=NO_SKILLS,
     )
 
 
@@ -176,6 +177,7 @@ def test_unrecognized_model_aborts_scan_before_writing(engine: Engine, tmp_path:
             classifier_version="v",
             domain_rules=parse_rules(RAW, home=HOME),
             domain_call=bad,
+            skills_dir=NO_SKILLS,
         )
     assert _domains(engine) == {}
 
@@ -204,6 +206,7 @@ def test_announce_precedes_first_domain_call_and_counts_it(engine: Engine, tmp_p
         announce=lambda n: events.append(f"announce {n}"),
         domain_rules=parse_rules(RAW, home=HOME),
         domain_call=domain_call,
+        skills_dir=NO_SKILLS,
     )
     assert events[0] == "announce 3"  # 2 эпизода + 1 вызов области
     assert events.count("domain") == 1

@@ -12,7 +12,7 @@ from ai_retro.parsing.episodes import clean_reply, conversations_to_episodes
 from ai_retro.parsing.files import files_to_records, find_log_files
 from ai_retro.parsing.schemas import EpisodeDraft
 from ai_retro.scan.service import scan
-from tests.conftest import user_line
+from tests.conftest import NO_SKILLS, make_skill, user_line
 
 REJECT = (
     "The user doesn't want to proceed with this tool use. The tool use was rejected "
@@ -55,9 +55,9 @@ def _write(
     return root / "logs"
 
 
-def _episodes(logs: Path) -> list[EpisodeDraft]:
+def _episodes(logs: Path, skills_dir: Path = NO_SKILLS) -> list[EpisodeDraft]:
     records = files_to_records(find_log_files(logs))
-    return conversations_to_episodes(records_to_conversations(records))
+    return conversations_to_episodes(records_to_conversations(records), skills_dir=skills_dir)
 
 
 def test_only_user_written_text_is_episode(tmp_path: Path) -> None:
@@ -75,7 +75,8 @@ def test_only_user_written_text_is_episode(tmp_path: Path) -> None:
         user_line("s2", "<system-reminder>\nnote\n</system-reminder>", _ts(6)),
         user_line("u2", command, _ts(7)),
     ]
-    episodes = _episodes(_write(tmp_path, lines))
+    skills = make_skill(tmp_path / "skills", "plain")
+    episodes = _episodes(_write(tmp_path, lines), skills)
     assert [(e.uuid, e.text) for e in episodes] == [
         ("u1", "обычная реплика"),
         ("u2", "/plain перепиши текст"),
@@ -252,6 +253,7 @@ def test_scan_bare_skill_call_is_neutral_without_model(engine: Engine, tmp_path:
         since=None,
         threads=1,
         classifier_version="v",
+        skills_dir=make_skill(tmp_path / "skills", "plain"),
     )
     assert (result.found, result.classified, calls) == (1, 0, [])
     with Session(engine) as s:
@@ -270,13 +272,29 @@ def test_scan_skill_call_with_args_sends_only_arguments(engine: Engine, tmp_path
         return json.dumps({"category": "инструкция", "gist": "не писать доки"})
 
     logs = _write(tmp_path, _skill_lines("не пиши доки, только структура"))
-    result = scan(engine, call, logs_dir=logs, since=None, threads=1, classifier_version="v")
+    result = scan(
+        engine,
+        call,
+        logs_dir=logs,
+        since=None,
+        threads=1,
+        classifier_version="v",
+        skills_dir=make_skill(tmp_path / "skills", "plain"),
+    )
     assert result.classified == 1
     (prompt,) = prompts
     assert prompt.endswith("Реплика пользователя:\nне пиши доки, только структура")
     assert "/plain" not in prompt
     assert "вызов скилла" in prompt  # признак виден модели
-    again = scan(engine, call, logs_dir=logs, since=None, threads=1, classifier_version="v")
+    again = scan(
+        engine,
+        call,
+        logs_dir=logs,
+        since=None,
+        threads=1,
+        classifier_version="v",
+        skills_dir=make_skill(tmp_path / "skills", "plain"),
+    )
     assert (again.classified, len(prompts)) == (0, 1)
     with Session(engine) as s:
         assert s.scalars(select(EpisodeRow)).one().skill == "plain"
@@ -297,6 +315,7 @@ def test_scan_classifier_context_has_marker(engine: Engine, tmp_path: Path) -> N
         since=None,
         threads=1,
         classifier_version="v",
+        skills_dir=NO_SKILLS,
     )
     assert len(prompts) == 1
     assert "[вставка 6 символов]" in prompts[0]
@@ -309,3 +328,33 @@ def test_quoted_command_tag_is_plain_episode(tmp_path: Path) -> None:
     text = "почему в логе <command-name>/x</command-name> так"
     records = files_to_records(find_log_files(_write(tmp_path, [user_line("u1", text, _ts(0))])))
     assert [(r.text, r.is_command) for r in records] == [(text, False)]
+
+
+def test_builtin_command_is_plain_reply_without_signal(tmp_path: Path) -> None:
+    def command(name: str, args: str) -> str:
+        return (
+            f"<command-message>{name}</command-message>\n<command-name>/{name}</command-name>\n"
+            f"<command-args>{args}</command-args>"
+        )
+
+    lines = [
+        user_line("u1", command("compact", ""), _ts(0)),
+        user_line("u2", command("py-setup", "спека"), _ts(1)),
+    ]
+    skills = make_skill(tmp_path / "skills", "py-setup")
+    episodes = _episodes(_write(tmp_path, lines), skills)
+    assert [(e.text, e.skill, e.signals, e.category) for e in episodes] == [
+        ("/compact", None, (), None),
+        ("/py-setup спека", "py-setup", ("вызов скилла",), None),
+    ]
+
+
+def test_project_skill_counts(tmp_path: Path) -> None:
+    command = (
+        "<command-message>local</command-message>\n<command-name>/local</command-name>\n"
+        "<command-args>x</command-args>"
+    )
+    logs = _write(tmp_path, [user_line("u1", command, _ts(0), cwd=str(tmp_path / "proj"))])
+    make_skill(tmp_path / "proj" / ".claude" / "skills", "local")
+    (episode,) = _episodes(logs)
+    assert episode.skill == "local"
