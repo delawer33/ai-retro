@@ -13,7 +13,7 @@ from ai_retro.classify.service import (
     classify_many,
 )
 from ai_retro.db.models import ClassificationRow, EpisodeRow, EvalRunRow, GoldLabelRow
-from ai_retro.errors import EmptyGoldSetError
+from ai_retro.errors import ClassifierSchemaError, EmptyGoldSetError
 from ai_retro.evals.baseline import baseline_category
 from ai_retro.evals.criteria import Check, stop_criteria
 from ai_retro.evals.metrics import Metrics, Pair, class_deltas, compute_metrics
@@ -120,6 +120,11 @@ def _model_categories(
     session.commit()
     if outcome.error is not None:
         raise outcome.error
+    if outcome.unclassified:
+        raise ClassifierSchemaError(
+            f"Ответ не по схеме на повторе у {len(outcome.unclassified)} эпизодов: "
+            "оценка без них исказит метрики. Повтори запуск."
+        )
     return categories
 
 

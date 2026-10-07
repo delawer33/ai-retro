@@ -20,7 +20,7 @@ from ai_retro.classify.service import (
 from ai_retro.cli import app
 from ai_retro.config import Settings
 from ai_retro.db.models import ClassificationRow
-from ai_retro.errors import ModelCallError
+from ai_retro.errors import UnrecognizedModelError
 from ai_retro.scan.service import scan
 
 from .conftest import user_line
@@ -76,18 +76,48 @@ def test_build_prompt_truncates_by_length() -> None:
 
 def test_classify_many_keeps_processed_on_error() -> None:
     def call(prompt: str) -> str:
-        return "не json" if prompt == "bad" else OK
+        if prompt == "bad":
+            raise UnrecognizedModelError("nope")
+        return OK
 
     outcome = classify_many(call, [("a", "ok"), ("b", "bad")], threads=1)
     assert set(outcome.results) == {"a"}
-    assert isinstance(outcome.error, ModelCallError)
+    assert isinstance(outcome.error, UnrecognizedModelError)
+
+
+def test_classify_many_retries_schema_miss_once() -> None:
+    answers = iter(["Я не могу вызвать StructuredOutput", OK])
+    calls: list[str] = []
+
+    def call(prompt: str) -> str:
+        calls.append(prompt)
+        return next(answers)
+
+    outcome = classify_many(call, [("a", "p")], threads=1)
+    assert set(outcome.results) == {"a"}
+    assert outcome.unclassified == []
+    assert len(calls) == 2
+
+
+def test_classify_many_skips_after_second_schema_miss() -> None:
+    outcome = classify_many(lambda _: "текст", [("a", "p")], threads=1)
+    assert outcome.results == {}
+    assert outcome.unclassified == ["a"]
+    assert outcome.error is None
+
+
+def test_system_prompt_explains_paste_placeholder() -> None:
+    assert "[вставка N символов]" in SYSTEM_PROMPT
+    assert "«запрос»" in SYSTEM_PROMPT
 
 
 def test_scan_saves_processed_then_raises(engine: Engine, logs_dir: Path) -> None:
     def call(prompt: str) -> str:
-        return "мусор" if "я же просил" in prompt else OK
+        if "я же просил" in prompt:
+            raise UnrecognizedModelError("nope")
+        return OK
 
-    with pytest.raises(ModelCallError):
+    with pytest.raises(UnrecognizedModelError):
         scan(engine, call, logs_dir=logs_dir, since=None, threads=1, classifier_version="v1")
     with Session(engine) as s:
         rows = s.scalars(select(ClassificationRow)).all()
@@ -168,7 +198,11 @@ def test_cli_model_error_exits_nonzero_with_one_line(
 ) -> None:
     monkeypatch.setenv("AI_RETRO_LOGS_DIR", str(logs_dir))
     monkeypatch.setenv("AI_RETRO_DB_PATH", str(tmp_path / "db" / "x.db"))
-    monkeypatch.setattr("ai_retro.cli.make_claude_call", lambda **_: lambda _p: "мусор")
+
+    def broken(_: str) -> str:
+        raise UnrecognizedModelError("nope")
+
+    monkeypatch.setattr("ai_retro.cli.make_claude_call", lambda **_: broken)
     result = CliRunner().invoke(app, ["scan"])
     assert result.exit_code == 1
     assert "Ошибка:" in result.output

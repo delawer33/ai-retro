@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ai_retro.errors import AiRetroError, ModelCallError
+from ai_retro.errors import AiRetroError, ClassifierSchemaError
 from ai_retro.llm import ModelCall
 
 CATEGORIES = ("поправка", "инструкция", "запрос", "нейтрально")
@@ -79,31 +79,46 @@ def classify_episode(call: ModelCall, prompt: str) -> Classification:
         data = json.loads(raw)
         category, gist = data["category"], data["gist"]
     except (json.JSONDecodeError, KeyError, TypeError) as exc:
-        raise ModelCallError(f"Классификатор вернул ответ не по схеме: {raw[:100]!r}") from exc
+        raise ClassifierSchemaError(
+            f"Классификатор вернул ответ не по схеме: {raw[:100]!r}"
+        ) from exc
     if category not in CATEGORIES or not isinstance(gist, str):
-        raise ModelCallError(f"Классификатор вернул неизвестную категорию: {category!r}")
+        raise ClassifierSchemaError(f"Классификатор вернул неизвестную категорию: {category!r}")
     return Classification(category=category, gist=gist)
+
+
+def classify_with_retry(call: ModelCall, prompt: str) -> Classification:
+    """Ответ не по схеме — один повтор; второй раз не по схеме — ошибка уходит наверх."""
+    try:
+        return classify_episode(call, prompt)
+    except ClassifierSchemaError:
+        return classify_episode(call, prompt)
 
 
 @dataclass
 class BatchOutcome:
     results: dict[str, Classification] = field(default_factory=dict)
+    # Ответ не по схеме и на повторе (ADR 0010): эпизод остаётся без классификации.
+    unclassified: list[str] = field(default_factory=list)
     error: AiRetroError | None = None
 
 
 def classify_many(
     call: ModelCall, items: Sequence[tuple[str, str]], *, threads: int
 ) -> BatchOutcome:
-    """items: (uuid, prompt). Первая ошибка останавливает запуск новых вызовов, но уже
+    """items: (uuid, prompt). Ответ не по схеме после повтора пропускается (unclassified).
+    Первая другая ошибка (вызов невозможен) останавливает запуск новых вызовов, но уже
     полученные результаты возвращаются: вызывающий сохраняет их и только потом падает."""
     outcome = BatchOutcome()
     with ThreadPoolExecutor(max_workers=max(1, threads)) as pool:
-        futures = {pool.submit(classify_episode, call, prompt): uuid for uuid, prompt in items}
+        futures = {pool.submit(classify_with_retry, call, prompt): uuid for uuid, prompt in items}
         for future in as_completed(futures):
             if future.cancelled():
                 continue
             try:
                 outcome.results[futures[future]] = future.result()
+            except ClassifierSchemaError:
+                outcome.unclassified.append(futures[future])
             except AiRetroError as exc:
                 if outcome.error is None:
                     outcome.error = exc
