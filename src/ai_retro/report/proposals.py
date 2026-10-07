@@ -8,11 +8,13 @@ from ai_retro.classify.service import LOOP_MARKER
 from ai_retro.domain.service import is_scratch
 from ai_retro.errors import ModelCallError
 from ai_retro.llm import ModelCall
+from ai_retro.parsing.skills import find_skill
 from ai_retro.report.schemas import (
     PROPOSED,
     TARGET_GLOBAL,
     TARGET_PROJECT,
     TARGET_SKILL,
+    GistItem,
     Pattern,
     Proposal,
     Target,
@@ -52,22 +54,38 @@ JSON_SCHEMA = {
 }
 
 
-def skill_file(name: str) -> str:
-    return f"~/.claude/skills/{name}/SKILL.md"
+def display_path(path: Path) -> str:
+    """Домашний каталог — как `~/…`, остальное абсолютным путём."""
+    try:
+        return f"~/{path.relative_to(Path.home()).as_posix()}"
+    except ValueError:
+        return str(path)
 
 
-def choose_target(pattern: Pattern) -> Target:
+def _find_for_episodes(name: str, episodes: tuple[GistItem, ...], skills_dir: Path) -> Path | None:
+    projects = sorted({e.project for e in episodes if e.skill == name})
+    for project in projects:
+        if (found := find_skill(name, project, skills_dir=skills_dir)) is not None:
+            return found
+    return None
+
+
+def choose_target(pattern: Pattern, *, skills_dir: Path) -> Target:
     """Куда нацелить паттерн; чистая функция от эпизодов.
 
     Скилл — если с одним скиллом связано больше половины эпизодов; иначе беседы одного проекта
-    — CLAUDE.md проекта; разные проекты и любой scratch — глобальный CLAUDE.md.
+    — CLAUDE.md проекта; разные проекты и любой scratch — глобальный CLAUDE.md. Цель-скилл —
+    SKILL.md, найденный на диске (проект эпизода, затем `skills_dir`); не найден — правила
+    идут дальше (ADR 0012).
     """
     episodes = pattern.episodes
     skills = Counter(e.skill for e in episodes if e.skill)
     if skills:
         (skill, count), *_ = sorted(skills.items(), key=lambda kv: (-kv[1], kv[0]))
         if count * 2 > len(episodes):
-            return Target(TARGET_SKILL, skill_file(skill))
+            found = _find_for_episodes(skill, episodes, skills_dir)
+            if found is not None:
+                return Target(TARGET_SKILL, display_path(found))
     projects = {e.project for e in episodes}
     if len(projects) == 1 and not any(is_scratch(p) for p in projects):
         (project,) = projects
@@ -89,8 +107,8 @@ def proposal_prompt(pattern: Pattern, target: Target) -> str:
     return "\n".join(lines)
 
 
-def generate_proposal(call: ModelCall, pattern: Pattern) -> Proposal:
-    target = choose_target(pattern)
+def generate_proposal(call: ModelCall, pattern: Pattern, *, skills_dir: Path) -> Proposal:
+    target = choose_target(pattern, skills_dir=skills_dir)
     raw = call(proposal_prompt(pattern, target))
     try:
         data = json.loads(raw)

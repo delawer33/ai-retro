@@ -210,14 +210,15 @@ def save_patterns(engine: Engine, patterns: Sequence[Pattern], *, now: datetime)
 
 
 def with_proposals(
-    engine: Engine, proposal_call: ModelCall, patterns: Sequence[Pattern]
+    engine: Engine, proposal_call: ModelCall, patterns: Sequence[Pattern], *, skills_dir: Path
 ) -> list[Pattern]:
     """Каждому паттерну — предложение: из базы, если оно уже есть, иначе новое от модели."""
     kept = kept_proposals(engine)
     result: list[Pattern] = []
     for p in patterns:
         proposal = kept.get(frozenset(e.uuid for e in p.episodes))
-        result.append(replace(p, proposal=proposal or generate_proposal(proposal_call, p)))
+        proposal = proposal or generate_proposal(proposal_call, p, skills_dir=skills_dir)
+        result.append(replace(p, proposal=proposal))
     return result
 
 
@@ -234,7 +235,9 @@ def build_report(
     items, distribution = load_report_data(
         engine, since=since, classifier_version=classifier_version, skills_dir=skills_dir
     )
-    patterns = with_proposals(engine, proposal_call, group_gists(call, items))
+    patterns = with_proposals(
+        engine, proposal_call, group_gists(call, items), skills_dir=skills_dir
+    )
     save_patterns(engine, patterns, now=now)
     return ReportData(since=since, distribution=distribution, patterns=tuple(patterns))
 
