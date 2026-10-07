@@ -44,7 +44,7 @@ def render(result: EvalResult) -> str:
     lines += _per_class(result.model, result.deltas)
     lines += ["", "Бейзлайн (регулярка + признаки)"]
     lines += _per_class(result.baseline, None)
-    ceiling = "нет повторной разметки" if result.ceiling is None else f"{result.ceiling:.2f}"
+    ceiling = "нет повторных меток" if result.ceiling is None else f"{result.ceiling:.2f}"
     lines += ["", f"Потолок (согласие с собой, пар {result.ceiling_n}): {ceiling}"]
     lines += ["", "Стоп-критерий этапа 1"]
     for check in result.checks:

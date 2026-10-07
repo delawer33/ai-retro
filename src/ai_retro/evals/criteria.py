@@ -27,11 +27,7 @@ def stop_criteria(model: Metrics, baseline: Metrics, ceiling: float | None) -> l
     checks = []
 
     if ceiling is None:
-        checks.append(
-            Check(
-                "потолок", None, "нет повторной разметки: ai-retro label, режим повторной разметки"
-            )
-        )
+        checks.append(Check("потолок", None, "нет повторных меток: ai-retro label --relabel"))
     else:
         checks.append(
             Check(
