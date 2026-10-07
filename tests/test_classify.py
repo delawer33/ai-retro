@@ -35,6 +35,14 @@ def test_guide_is_system_prompt_with_marker_and_edge_cases() -> None:
     assert "поправка > инструкция > запрос > нейтрально" in SYSTEM_PROMPT
 
 
+def test_guide_has_qa_edge_cases() -> None:
+    assert "Добавь ещё" in SYSTEM_PROMPT
+    assert "почему тут 50–60%" in SYSTEM_PROMPT
+    assert "в этом разговоре" in SYSTEM_PROMPT
+    assert "по форме реплики, не по теме" in SYSTEM_PROMPT
+    assert "не повторяет" in SYSTEM_PROMPT
+
+
 def test_prompt_sha_matches_git_hash_object() -> None:
     expected = subprocess.run(
         ["git", "hash-object", str(GUIDE_PATH)], capture_output=True, text=True, check=True
