@@ -94,6 +94,29 @@ def test_reminder_block_before_user_text_keeps_reply(tmp_path: Path) -> None:
     assert [e.text for e in episodes] == ["поправь тест"]
 
 
+_ARTIFACT_BLOCK = (
+    '<artifact-view-context artifact="a1"> {"context":{"mode":"edit"}} </artifact-view-context>'
+)
+
+
+def test_artifact_view_context_block_is_stripped_from_reply(tmp_path: Path) -> None:
+    lines = [
+        user_line("u1", _ARTIFACT_BLOCK + "\nпоправь заголовок", _ts(0)),
+        user_line("u2", _ARTIFACT_BLOCK, _ts(1)),
+    ]
+    episodes = _episodes(_write(tmp_path, lines))
+    assert [(e.uuid, e.text) for e in episodes] == [("u1", "поправь заголовок")]
+
+
+def test_artifact_view_context_as_separate_block_keeps_reply(tmp_path: Path) -> None:
+    blocks: list[dict[str, object]] = [
+        {"type": "text", "text": _ARTIFACT_BLOCK},
+        {"type": "text", "text": "поправь тест"},
+    ]
+    episodes = _episodes(_write(tmp_path, [_blocks("u1", 0, blocks)]))
+    assert [e.text for e in episodes] == ["поправь тест"]
+
+
 def test_text_next_to_image_is_episode(tmp_path: Path) -> None:
     blocks: list[dict[str, object]] = [
         {"type": "text", "text": "смотри"},
@@ -225,6 +248,9 @@ def test_clean_reply_per_block_kind() -> None:
     assert (cmd.text, cmd.is_command) == ("/p аргумент", True)
     paste = clean_reply('смотри <pasted_content id="1">секрет</pasted_content id="1">')
     assert paste.text == "смотри [вставка 6 символов]"
+    assert clean_reply(_ARTIFACT_BLOCK).text is None
+    assert clean_reply(_ARTIFACT_BLOCK + " ответ").text == "ответ"
+    assert clean_reply('<artifact-view-context artifact="a"> {"context"').text is None
     assert clean_reply("<task-notification>\n<task-id>x</task-id>").text is None
     assert clean_reply("<local-command-stdout>ok</local-command-stdout>").text is None
     assert clean_reply("This session is being continued from a previous conversation.").text is None

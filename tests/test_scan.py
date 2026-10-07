@@ -278,6 +278,20 @@ def test_scan_review_removes_junk_with_classification(engine: Engine, logs_dir: 
         ).all()
 
 
+def test_scan_review_removes_artifact_view_context_episode(engine: Engine, logs_dir: Path) -> None:
+    stale = _stale("junk")
+    stale.text = (
+        '<artifact-view-context artifact="a1"> {"context":{"mode":"edit"}} </artifact-view-context>'
+    )
+    with Session(engine) as s:
+        s.add(stale)
+        s.commit()
+    result = _scan(engine, FakeModel(), logs_dir)
+    assert result.review.removed == 1
+    with Session(engine) as s:
+        assert s.get(EpisodeRow, "junk") is None
+
+
 def test_scan_review_removes_gold_rows(engine: Engine, logs_dir: Path) -> None:
     with Session(engine) as s:
         s.add(_stale("junk"))
