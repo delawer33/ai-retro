@@ -1,7 +1,7 @@
 import json
 import os
-import re
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -18,16 +18,16 @@ from ai_retro.errors import (
     ReportWriteError,
 )
 from ai_retro.llm import ModelCall
-from ai_retro.report.schemas import GistItem, Pattern, ReportData
+from ai_retro.report.proposals import generate_proposal, render_proposal
+from ai_retro.report.schemas import GistItem, Pattern, Proposal, ReportData
+from ai_retro.report.text import example_text
 
 PATTERN_CATEGORIES = ("поправка", "инструкция")
 MIN_EPISODES = 3
 MIN_CONVERSATIONS = 2
 TOP_N = 10
 EXAMPLES = 3
-EXAMPLE_LIMIT = 200
 NO_DOMAIN = "без области"
-PASTE_MARKER = "[вставка]"
 # Ниже этого сходства суть эпизода с названием паттерна — повод перепроверить глазами.
 RECHECK_SIMILARITY = 0.4
 PROTECTED_NAMES = frozenset({"claude.md", "skill.md"})
@@ -58,11 +58,6 @@ JSON_SCHEMA = {
     "additionalProperties": False,
 }
 
-_PASTE_RE = re.compile(
-    r"<pasted_content>.*?</pasted_content>|```.*?```|\[(?:Pasted text|Image)[^\]]*\]",
-    re.DOTALL,
-)
-
 
 def load_report_data(
     engine: Engine, *, since: datetime | None, classifier_version: str
@@ -77,6 +72,7 @@ def load_report_data(
     items: list[GistItem] = []
     distribution: dict[str, dict[str, int]] = {}
     with Session(engine) as session:
+        skill_calls = _skill_calls(session)
         for episode, cls in session.execute(stmt):
             if since is not None and _utc(episode.timestamp) < since:
                 continue
@@ -94,11 +90,35 @@ def load_report_data(
                         gist=cls.gist,
                         text=episode.text,
                         timestamp=episode.timestamp,
+                        skill=_linked_skill(skill_calls, episode),
                     )
                 )
     if not distribution:
         raise NoClassificationsError
     return items, distribution
+
+
+def _skill_calls(session: Session) -> dict[str, list[tuple[datetime, str]]]:
+    """Вызовы скиллов по беседам, по времени; период отчёта не режет: вызов мог быть раньше."""
+    stmt = (
+        select(EpisodeRow.conversation_id, EpisodeRow.timestamp, EpisodeRow.skill)
+        .where(EpisodeRow.skill.is_not(None))
+        .order_by(EpisodeRow.timestamp, EpisodeRow.uuid)
+    )
+    calls: dict[str, list[tuple[datetime, str]]] = {}
+    for conversation_id, timestamp, skill in session.execute(stmt):
+        if skill:
+            calls.setdefault(conversation_id, []).append((_utc(timestamp), skill))
+    return calls
+
+
+def _linked_skill(calls: dict[str, list[tuple[datetime, str]]], episode: EpisodeRow) -> str | None:
+    """Скилл самого эпизода или последний вызванный в беседе до него."""
+    if episode.skill:
+        return episode.skill
+    when = _utc(episode.timestamp)
+    earlier = [skill for ts, skill in calls.get(episode.conversation_id, []) if ts < when]
+    return earlier[-1] if earlier else None
 
 
 def _utc(value: datetime) -> datetime:
@@ -129,25 +149,73 @@ def group_gists(call: ModelCall, items: Sequence[GistItem]) -> list[Pattern]:
     return sorted(patterns, key=lambda p: (-len(p.episodes), p.title))
 
 
+def kept_proposals(engine: Engine) -> dict[frozenset[str], Proposal]:
+    """Предложения, уже лежащие в базе, по набору эпизодов паттерна."""
+    stmt = select(PatternRow, ProposalRow).join(
+        ProposalRow, ProposalRow.pattern_id == PatternRow.id
+    )
+    with Session(engine) as session:
+        return {
+            frozenset(pattern.episode_uuids): Proposal(
+                target_file=row.target_file,
+                section=row.section,
+                text=row.text,
+                rationale=row.rationale,
+                status=row.status,
+            )
+            for pattern, row in session.execute(stmt)
+        }
+
+
 def save_patterns(engine: Engine, patterns: Sequence[Pattern], *, now: datetime) -> None:
-    """Заменяет прежние паттерны, на которые ещё нет предложений."""
+    """Заменяет прежние паттерны без предложений; паттерн с предложением пишется со своим.
+
+    Паттерн, чей набор эпизодов уже лежит в базе с предложением, не дублируется.
+    """
     with Session(engine) as session:
         proposed = select(ProposalRow.pattern_id)
         session.execute(delete(PatternRow).where(PatternRow.id.not_in(proposed)))
+        have = {
+            frozenset(episode_uuids)
+            for episode_uuids in session.scalars(select(PatternRow.episode_uuids))
+        }
         for p in patterns:
-            session.add(
-                PatternRow(
-                    gist=p.title,
-                    episode_uuids=[e.uuid for e in p.episodes],
-                    created_at=now,
+            uuids = [e.uuid for e in p.episodes]
+            if frozenset(uuids) in have:
+                continue
+            row = PatternRow(gist=p.title, episode_uuids=uuids, created_at=now)
+            session.add(row)
+            if p.proposal is not None:
+                session.flush()
+                session.add(
+                    ProposalRow(
+                        pattern_id=row.id,
+                        target_file=p.proposal.target_file,
+                        section=p.proposal.section,
+                        text=p.proposal.text,
+                        rationale=p.proposal.rationale,
+                        status=p.proposal.status,
+                    )
                 )
-            )
         session.commit()
+
+
+def with_proposals(
+    engine: Engine, proposal_call: ModelCall, patterns: Sequence[Pattern]
+) -> list[Pattern]:
+    """Каждому паттерну — предложение: из базы, если оно уже есть, иначе новое от модели."""
+    kept = kept_proposals(engine)
+    result: list[Pattern] = []
+    for p in patterns:
+        proposal = kept.get(frozenset(e.uuid for e in p.episodes))
+        result.append(replace(p, proposal=proposal or generate_proposal(proposal_call, p)))
+    return result
 
 
 def build_report(
     engine: Engine,
     call: ModelCall,
+    proposal_call: ModelCall,
     *,
     since: datetime | None,
     now: datetime,
@@ -156,19 +224,9 @@ def build_report(
     items, distribution = load_report_data(
         engine, since=since, classifier_version=classifier_version
     )
-    patterns = group_gists(call, items)
+    patterns = with_proposals(engine, proposal_call, group_gists(call, items))
     save_patterns(engine, patterns, now=now)
     return ReportData(since=since, distribution=distribution, patterns=tuple(patterns))
-
-
-def mask_pastes(text: str) -> str:
-    """Вставки (<pasted_content>, блоки кода, плейсхолдеры) показываются маркером с длиной."""
-    return _PASTE_RE.sub(lambda m: f"[вставка, {len(m.group(0))} симв.]", text)
-
-
-def example_text(text: str) -> str:
-    flat = " ".join(mask_pastes(text).split())
-    return flat if len(flat) <= EXAMPLE_LIMIT else flat[: EXAMPLE_LIMIT - 1] + "…"
 
 
 def recheck_count(pattern: Pattern) -> int:
@@ -226,6 +284,8 @@ def render_report(data: ReportData) -> str:
         lines += [
             f"  - «{example_text(e.text)}» — беседа `{e.conversation_id}`" for e in _examples(p)
         ]
+        if p.proposal is not None:
+            lines += render_proposal(p.proposal)
         lines.append("")
     lines += [f"## Топ-{TOP_N}: что перепроверить глазами", ""]
     for i, p in enumerate(data.patterns[:TOP_N], 1):
@@ -269,6 +329,7 @@ def write_report(path: Path, text: str) -> None:
 def run_report(
     engine: Engine,
     call: ModelCall,
+    proposal_call: ModelCall,
     *,
     output: Path,
     since: datetime | None,
@@ -277,6 +338,8 @@ def run_report(
 ) -> ReportData:
     """Проверка пути, паттерны, отчёт. Неверный путь не стоит ни вызова модели, ни паттернов."""
     check_report_path(output)
-    data = build_report(engine, call, since=since, now=now, classifier_version=classifier_version)
+    data = build_report(
+        engine, call, proposal_call, since=since, now=now, classifier_version=classifier_version
+    )
     write_report(output, render_report(data))
     return data
