@@ -62,3 +62,8 @@ class InvalidReportPathError(AiRetroError):
 class ReportWriteError(AiRetroError):
     def __init__(self, path: object, reason: str) -> None:
         super().__init__(f"Отчёт нельзя записать в {path}: {reason}. Укажи другой --output.")
+
+
+class EmptyGoldSetError(AiRetroError):
+    def __init__(self, split: str) -> None:
+        super().__init__(f"В эталоне нет эпизодов ({split}). Разметь их командой `ai-retro label`.")

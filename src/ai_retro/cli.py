@@ -16,6 +16,8 @@ from ai_retro.domain.service import JSON_SCHEMA as DOMAIN_SCHEMA
 from ai_retro.domain.service import SYSTEM_PROMPT as DOMAIN_PROMPT
 from ai_retro.domain.service import parse_rules
 from ai_retro.errors import AiRetroError
+from ai_retro.evals.render import render
+from ai_retro.evals.service import DEV, TEST, ensure_gold, run_eval
 from ai_retro.label.service import (
     ensure_sample,
     pending_items,
@@ -23,7 +25,7 @@ from ai_retro.label.service import (
     render_item,
     save_label,
 )
-from ai_retro.llm import make_claude_call
+from ai_retro.llm import claude_version, make_claude_call
 from ai_retro.report.service import (
     JSON_SCHEMA as REPORT_SCHEMA,
 )
@@ -157,3 +159,36 @@ def report_command(
         typer.echo(f"Ошибка: {exc}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(f"Паттернов: {len(data.patterns)}. Отчёт: {output}")
+
+
+@app.command("eval")
+def eval_command(
+    test: Annotated[bool, typer.Option("--test", help="Гнать test вместо dev.")] = False,
+    refresh: Annotated[
+        bool, typer.Option("--refresh", help="Заново классифицировать эпизоды эталона.")
+    ] = False,
+) -> None:
+    """Качество классификатора на эталоне: метрики, бейзлайн, потолок, стоп-критерий."""
+    settings = Settings()
+    split = TEST if test else DEV
+    try:
+        engine = make_engine(settings.db_path)
+        migrate(engine)
+        ensure_gold(engine, split)
+        call = make_claude_call(
+            system_prompt=SYSTEM_PROMPT, json_schema=JSON_SCHEMA, model=settings.model
+        )
+        result = run_eval(
+            engine,
+            call,
+            split=split,
+            refresh=refresh,
+            threads=settings.threads,
+            model=settings.model,
+            claude_version=claude_version(),
+            context_chars=settings.context_chars,
+        )
+    except AiRetroError as exc:
+        typer.echo(f"Ошибка: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(render(result))
