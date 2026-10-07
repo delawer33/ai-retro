@@ -259,3 +259,31 @@ def test_eval_saves_partial_results_then_raises(engine: Engine) -> None:
     with Session(engine) as s:
         saved = list(s.scalars(select(ClassificationRow.episode_uuid)))
     assert saved == ["d1"]
+
+
+def test_eval_compares_gold_with_newest_classification(engine: Engine) -> None:
+    _add(engine, "d1", "поправка", "запрос")
+    with Session(engine) as s:
+        s.add(
+            ClassificationRow(
+                episode_uuid="d1",
+                category="поправка",
+                gist="g",
+                classifier_version=classifier_version("haiku"),
+            )
+        )
+        s.commit()
+    result = _run(engine)
+    assert result.disagreements == []
+
+
+def test_eval_refresh_twice_does_not_grow_classifications(engine: Engine) -> None:
+    _add(engine, "d1", "запрос", "запрос")
+
+    def call(_: str) -> str:
+        return json.dumps({"category": "запрос", "gist": "g"})
+
+    for _ in range(2):
+        run_eval(engine, call, model="haiku", claude_version="1", refresh=True)
+    with Session(engine) as s:
+        assert len(list(s.scalars(select(ClassificationRow)))) == 1

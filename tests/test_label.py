@@ -16,6 +16,7 @@ from ai_retro.label.service import (
     LabelItem,
     draw_sample,
     ensure_sample,
+    load_candidates,
     pending_items,
     pending_relabel_items,
     render_item,
@@ -200,3 +201,17 @@ def test_cli_relabel_blind(cli_env: Engine) -> None:
         ("инструкция", True),
     ]
     assert "поправка" not in result.output.split("Реплика:")[1].split("1=")[0]
+
+
+def test_candidates_use_latest_classification(engine: Engine) -> None:
+    _fill(engine, 1)
+    with Session(engine) as s:
+        uuid = s.scalars(select(EpisodeRow.uuid)).one()
+        for category, version in (("запрос", "v1"), ("поправка", "v2")):
+            s.add(
+                ClassificationRow(
+                    episode_uuid=uuid, category=category, gist="g", classifier_version=version
+                )
+            )
+        s.commit()
+    assert [c.model_category for c in load_candidates(engine)] == ["поправка"]

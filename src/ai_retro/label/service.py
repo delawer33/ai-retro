@@ -9,9 +9,8 @@ from datetime import datetime
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from ai_retro.classify.service import CATEGORIES
+from ai_retro.classify.service import CATEGORIES, latest_classifications
 from ai_retro.db.models import (
-    ClassificationRow,
     EpisodeRow,
     GoldLabelRow,
     GoldReturnedRow,
@@ -109,9 +108,7 @@ def draw_sample(
 
 def load_candidates(engine: Engine) -> list[Candidate]:
     with Session(engine) as session:
-        latest: dict[str, str] = {}
-        for row in session.scalars(select(ClassificationRow).order_by(ClassificationRow.id)):
-            latest[row.episode_uuid] = row.category
+        latest = {uuid: row.category for uuid, row in latest_classifications(session).items()}
         return [
             Candidate(
                 uuid=e.uuid,

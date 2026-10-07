@@ -5,6 +5,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from ai_retro.db.models import ClassificationRow
 from ai_retro.errors import AiRetroError, ModelCallError
 from ai_retro.llm import ModelCall
 
@@ -110,3 +114,16 @@ def classify_many(
                     for pending in futures:
                         pending.cancel()
     return outcome
+
+
+def latest_classifications(
+    session: Session, *, classifier_version: str | None = None
+) -> dict[str, ClassificationRow]:
+    """Актуальная классификация каждого эпизода — последняя вставленная (ADR 0010).
+
+    Без `classifier_version` — среди всех версий; с ним — среди строк этой версии.
+    """
+    stmt = select(ClassificationRow).order_by(ClassificationRow.id)
+    if classifier_version is not None:
+        stmt = stmt.where(ClassificationRow.classifier_version == classifier_version)
+    return {row.episode_uuid: row for row in session.scalars(stmt)}
