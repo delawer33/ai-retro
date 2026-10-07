@@ -31,10 +31,8 @@ from ai_retro.report.service import (
     SYSTEM_PROMPT as REPORT_PROMPT,
 )
 from ai_retro.report.service import (
-    build_report,
     check_report_path,
-    render_report,
-    write_report,
+    run_report,
 )
 from ai_retro.scan.service import parse_since, scan
 
@@ -139,22 +137,22 @@ def report_command(
     """Найти паттерны среди поправок и инструкций и записать markdown-отчёт."""
     settings = Settings()
     try:
-        check_report_path(output)
         now = datetime.now(UTC)
         since_dt = parse_since(since, now=now) if since else None
+        check_report_path(output)
         call = make_claude_call(
             system_prompt=REPORT_PROMPT, json_schema=REPORT_SCHEMA, model=settings.model
         )
         engine = make_engine(settings.db_path)
         migrate(engine)
-        data = build_report(
+        data = run_report(
             engine,
             call,
+            output=output,
             since=since_dt,
             now=now,
             classifier_version=classifier_version(settings.model),
         )
-        write_report(output, render_report(data))
     except AiRetroError as exc:
         typer.echo(f"Ошибка: {exc}", err=True)
         raise typer.Exit(1) from exc

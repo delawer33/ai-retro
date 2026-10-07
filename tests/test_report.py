@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -9,13 +10,14 @@ from typer.testing import CliRunner
 
 from ai_retro.cli import app
 from ai_retro.db.models import ClassificationRow, EpisodeRow, PatternRow
-from ai_retro.errors import NoClassificationsError
+from ai_retro.errors import NoClassificationsError, ReportWriteError
 from ai_retro.report.service import (
     PASTE_MARKER,
     build_report,
     check_report_path,
     mask_pastes,
     render_report,
+    run_report,
     write_report,
 )
 
@@ -165,3 +167,75 @@ def test_cli_report_without_classifications(
     result = CliRunner().invoke(app, ["report", "--output", str(tmp_path / "r.md")])
     assert result.exit_code != 0
     assert "scan" in result.output
+
+
+def _bad_paths(tmp_path: Path) -> list[Path]:
+    (tmp_path / "adir").mkdir()
+    paths = [tmp_path / "missing" / "r.md", tmp_path / "adir"]
+    if os.geteuid() != 0:
+        ro = tmp_path / "ro"
+        ro.mkdir()
+        ro.chmod(0o500)
+        paths.append(ro / "r.md")
+    return paths
+
+
+def test_write_report_translates_os_errors(tmp_path: Path) -> None:
+    for bad in _bad_paths(tmp_path):
+        with pytest.raises(ReportWriteError, match="Укажи другой --output"):
+            write_report(bad, "x")
+
+
+def test_write_failure_after_check_is_domain_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom(self: Path, *args: object, **kwargs: object) -> int:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "write_text", boom)
+    with pytest.raises(ReportWriteError, match="Permission denied"):
+        write_report(tmp_path / "r.md", "x")
+
+
+def test_bad_output_path_costs_no_model_call_and_saves_no_patterns(
+    engine: Engine, tmp_path: Path
+) -> None:
+    rows = [(f"e{i}", f"c{i % 2}", "поправка", "не пиши X", f"t{i}") for i in range(3)]
+    seed(engine, rows)
+    for bad in _bad_paths(tmp_path):
+        call = groups_call(("Не писать X", [0, 1, 2]))
+        with pytest.raises(ReportWriteError):
+            run_report(engine, call, output=bad, since=None, now=NOW, classifier_version=VERSION)
+        assert call.calls == []
+        with Session(engine) as s:
+            assert s.scalars(select(PatternRow)).all() == []
+
+
+def test_run_report_writes_file(engine: Engine, tmp_path: Path) -> None:
+    rows = [(f"e{i}", f"c{i % 2}", "поправка", "не пиши X", f"t{i}") for i in range(3)]
+    seed(engine, rows)
+    out = tmp_path / "r.md"
+    run_report(
+        engine,
+        groups_call(("Не писать X", [0, 1, 2])),
+        output=out,
+        since=None,
+        now=NOW,
+        classifier_version=VERSION,
+    )
+    assert "### Не писать X" in out.read_text(encoding="utf-8")
+
+
+def test_cli_report_bad_output_never_calls_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("AI_RETRO_DB_PATH", str(tmp_path / "db" / "x.db"))
+
+    def forbidden(**_: object) -> None:
+        raise AssertionError("модель не должна вызываться")
+
+    monkeypatch.setattr("ai_retro.cli.make_claude_call", forbidden)
+    result = CliRunner().invoke(app, ["report", "--output", str(tmp_path / "no" / "r.md")])
+    assert result.exit_code == 1
+    assert "Ошибка:" in result.output
+    assert "OSError" not in result.output

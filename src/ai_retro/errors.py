@@ -57,3 +57,8 @@ class InvalidReportPathError(AiRetroError):
             f"Отчёт нельзя писать в {path}: отчёт не правит CLAUDE.md и SKILL.md. "
             "Укажи другой --output."
         )
+
+
+class ReportWriteError(AiRetroError):
+    def __init__(self, path: object, reason: str) -> None:
+        super().__init__(f"Отчёт нельзя записать в {path}: {reason}. Укажи другой --output.")

@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -10,7 +11,12 @@ from sqlalchemy.orm import Session
 
 from ai_retro.classify.service import CATEGORIES, LOOP_MARKER
 from ai_retro.db.models import ClassificationRow, EpisodeRow, PatternRow, ProposalRow
-from ai_retro.errors import InvalidReportPathError, ModelCallError, NoClassificationsError
+from ai_retro.errors import (
+    InvalidReportPathError,
+    ModelCallError,
+    NoClassificationsError,
+    ReportWriteError,
+)
 from ai_retro.llm import ModelCall
 from ai_retro.report.schemas import GistItem, Pattern, ReportData
 
@@ -168,7 +174,7 @@ def example_text(text: str) -> str:
 def recheck_count(pattern: Pattern) -> int:
     """Эпизоды, чья суть мало похожа на название паттерна: кандидаты в «фальшивые».
 
-    Это прокси по сходству формулировок, не оценка модели (см. ADR 0004).
+    Это прокси по сходству формулировок, не оценка модели (см. ADR 0005).
     """
     title = pattern.title.lower()
     return sum(
@@ -238,11 +244,39 @@ def render_report(data: ReportData) -> str:
 
 
 def check_report_path(path: Path) -> None:
-    """Отчёт не пишется поверх CLAUDE.md и SKILL.md (без учёта регистра)."""
+    """Путь вывода годится для записи; зовётся до модели и до сохранения паттернов."""
     if path.name.casefold() in PROTECTED_NAMES:
         raise InvalidReportPathError(path)
+    if path.is_dir():
+        raise ReportWriteError(path, "это каталог")
+    parent = path.parent
+    if not parent.is_dir():
+        raise ReportWriteError(path, f"каталога {parent} нет")
+    if not os.access(parent, os.W_OK | os.X_OK):
+        raise ReportWriteError(path, f"нет прав на запись в {parent}")
+    if path.exists() and not os.access(path, os.W_OK):
+        raise ReportWriteError(path, "нет прав на запись в файл")
 
 
 def write_report(path: Path, text: str) -> None:
     check_report_path(path)
-    path.write_text(text, encoding="utf-8")
+    try:
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise ReportWriteError(path, exc.strerror or type(exc).__name__) from exc
+
+
+def run_report(
+    engine: Engine,
+    call: ModelCall,
+    *,
+    output: Path,
+    since: datetime | None,
+    now: datetime,
+    classifier_version: str,
+) -> ReportData:
+    """Проверка пути, паттерны, отчёт. Неверный путь не стоит ни вызова модели, ни паттернов."""
+    check_report_path(output)
+    data = build_report(engine, call, since=since, now=now, classifier_version=classifier_version)
+    write_report(output, render_report(data))
+    return data
