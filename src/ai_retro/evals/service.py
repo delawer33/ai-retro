@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session
 
 from ai_retro.classify.service import (
@@ -11,6 +11,7 @@ from ai_retro.classify.service import (
     build_prompt,
     classifier_version,
     classify_many,
+    latest_classifications,
 )
 from ai_retro.db.models import ClassificationRow, EpisodeRow, EvalRunRow, GoldLabelRow
 from ai_retro.errors import ClassifierSchemaError, EmptyGoldSetError
@@ -92,12 +93,8 @@ def _model_categories(
 ) -> dict[str, str]:
     """Категории из базы; недостающие (или все при refresh) классифицируются заново."""
     categories: dict[str, str] = {}
-    for row in session.scalars(
-        select(ClassificationRow)
-        .where(ClassificationRow.classifier_version == version)
-        .order_by(ClassificationRow.id)
-    ):
-        categories[row.episode_uuid] = row.category
+    for uuid, row in latest_classifications(session, classifier_version=version).items():
+        categories[uuid] = row.category
     for e in episodes:
         if _is_bare_call(e):
             categories[e.uuid] = NEUTRAL  # голый вызов скилла в модель не идёт
@@ -107,6 +104,13 @@ def _model_categories(
         if (refresh or e.uuid not in categories) and not _is_bare_call(e)
     ]
     outcome = classify_many(call, todo, threads=threads)
+    # Одна строка на (эпизод, версия): прежнюю заменяем, а не дублируем (ADR 0010).
+    session.execute(
+        delete(ClassificationRow).where(
+            ClassificationRow.classifier_version == version,
+            ClassificationRow.episode_uuid.in_(outcome.results),
+        )
+    )
     for uuid, result in outcome.results.items():
         session.add(
             ClassificationRow(

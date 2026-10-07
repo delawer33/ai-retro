@@ -9,8 +9,8 @@ from pathlib import Path
 from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session
 
-from ai_retro.classify.service import CATEGORIES, LOOP_MARKER
-from ai_retro.db.models import ClassificationRow, EpisodeRow, PatternRow, ProposalRow
+from ai_retro.classify.service import CATEGORIES, LOOP_MARKER, latest_classifications
+from ai_retro.db.models import EpisodeRow, PatternRow, ProposalRow
 from ai_retro.errors import (
     InvalidReportPathError,
     ModelCallError,
@@ -63,17 +63,16 @@ def load_report_data(
     engine: Engine, *, since: datetime | None, classifier_version: str
 ) -> tuple[list[GistItem], dict[str, dict[str, int]]]:
     """Классифицированные эпизоды периода: (кандидаты в паттерны, распределение по областям)."""
-    stmt = (
-        select(EpisodeRow, ClassificationRow)
-        .join(ClassificationRow, ClassificationRow.episode_uuid == EpisodeRow.uuid)
-        .where(ClassificationRow.classifier_version == classifier_version)
-        .order_by(EpisodeRow.timestamp, EpisodeRow.uuid)
-    )
+    stmt = select(EpisodeRow).order_by(EpisodeRow.timestamp, EpisodeRow.uuid)
     items: list[GistItem] = []
     distribution: dict[str, dict[str, int]] = {}
     with Session(engine) as session:
         skill_calls = _skill_calls(session)
-        for episode, cls in session.execute(stmt):
+        latest = latest_classifications(session, classifier_version=classifier_version)
+        for episode in session.scalars(stmt):
+            cls = latest.get(episode.uuid)
+            if cls is None:
+                continue
             if since is not None and _utc(episode.timestamp) < since:
                 continue
             domain = episode.domain or NO_DOMAIN

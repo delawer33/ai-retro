@@ -492,3 +492,31 @@ def test_proposal_never_touches_target_files(engine: Engine, tmp_path: Path) -> 
         classifier_version=VERSION,
     )
     assert claude_md.read_text(encoding="utf-8") == "исходный"
+
+
+def test_report_counts_episode_with_two_versions_once_by_new_one(engine: Engine) -> None:
+    seed(engine, [("e1", "c1", "запрос", "старая", "текст")])
+    with Session(engine) as s:
+        s.add(
+            ClassificationRow(
+                episode_uuid="e1", category="поправка", gist="новая", classifier_version="v2"
+            )
+        )
+        s.commit()
+    items, distribution = load_report_data(engine, since=None, classifier_version="v2")
+    assert sum(sum(by_cat.values()) for by_cat in distribution.values()) == 1
+    assert [(i.category, i.gist) for i in items] == [("поправка", "новая")]
+
+
+def test_report_counts_same_version_duplicate_once(engine: Engine) -> None:
+    seed(engine, [("e1", "c1", "запрос", "старая", "текст")])
+    with Session(engine) as s:
+        s.add(
+            ClassificationRow(
+                episode_uuid="e1", category="поправка", gist="новая", classifier_version=VERSION
+            )
+        )
+        s.commit()
+    items, distribution = load_report_data(engine, since=None, classifier_version=VERSION)
+    assert sum(sum(by_cat.values()) for by_cat in distribution.values()) == 1
+    assert [i.gist for i in items] == ["новая"]
