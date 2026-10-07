@@ -18,6 +18,7 @@ from ai_retro.evals.baseline import baseline_category
 from ai_retro.evals.criteria import Check, stop_criteria
 from ai_retro.evals.metrics import Metrics, Pair, class_deltas, compute_metrics
 from ai_retro.llm import ModelCall
+from ai_retro.parsing.episodes import NEUTRAL, skill_arguments
 
 DEV = "dev"
 TEST = "test"
@@ -68,11 +69,15 @@ def _episode_input(episode: EpisodeRow) -> EpisodeInput:
     # Те же правила, что у scan: при rewind контекст — начало брошенной ветки.
     rewind = "rewind" in episode.signals
     return EpisodeInput(
-        text=episode.text,
+        text=skill_arguments(episode.text) if episode.skill else episode.text,
         signals=episode.signals,
         agent_reply=None if rewind else episode.context,
         abandoned_branch=episode.context if rewind else None,
     )
+
+
+def _is_bare_call(episode: EpisodeRow) -> bool:
+    return bool(episode.skill) and not skill_arguments(episode.text)
 
 
 def _model_categories(
@@ -93,10 +98,13 @@ def _model_categories(
         .order_by(ClassificationRow.id)
     ):
         categories[row.episode_uuid] = row.category
+    for e in episodes:
+        if _is_bare_call(e):
+            categories[e.uuid] = NEUTRAL  # голый вызов скилла в модель не идёт
     todo = [
         (e.uuid, build_prompt(_episode_input(e), context_chars=context_chars))
         for e in episodes
-        if refresh or e.uuid not in categories
+        if (refresh or e.uuid not in categories) and not _is_bare_call(e)
     ]
     outcome = classify_many(call, todo, threads=threads)
     for uuid, result in outcome.results.items():

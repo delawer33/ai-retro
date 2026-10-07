@@ -22,6 +22,7 @@ class EpisodeRow(Base):
     text: Mapped[str] = mapped_column(Text)
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
     signals: Mapped[list[str]] = mapped_column(JSON, default=list)
+    skill: Mapped[str | None] = mapped_column(String, nullable=True)  # имя скилла, если вызов
 
 
 class ClassificationRow(Base):
@@ -43,6 +44,14 @@ class GoldLabelRow(Base):
     split: Mapped[str] = mapped_column(String)  # dev | test
     labeled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     is_relabel: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class GoldReturnedRow(Base):
+    """Эпизоды, чью метку эталона сняла миграция 0003: вернулись в разметку."""
+
+    __tablename__ = "gold_returned"
+
+    episode_uuid: Mapped[str] = mapped_column(ForeignKey("episodes.uuid"), primary_key=True)
 
 
 class GoldSampleRow(Base):

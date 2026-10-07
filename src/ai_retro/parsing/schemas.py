@@ -49,4 +49,5 @@ class EpisodeDraft:
     text: str
     context: str | None
     signals: tuple[str, ...]
-    category: str | None = None  # выставлена без модели (вызов слэш-команды)
+    category: str | None = None  # выставлена без модели (голый вызов скилла — нейтрально)
+    skill: str | None = None  # имя скилла, если реплика начинается со слэш-команды

@@ -8,7 +8,7 @@ from pathlib import Path
 from ai_retro.errors import AiRetroError, ModelCallError
 from ai_retro.llm import ModelCall
 
-CATEGORIES = ("поправка", "инструкция", "запрос", "вызов скилла", "нейтрально")
+CATEGORIES = ("поправка", "инструкция", "запрос", "нейтрально")
 # Страховка от петли (ADR 0002): scan пропускает беседы, где встречается маркер.
 LOOP_MARKER = "[ai-retro-classifier]"
 # Гайд по разметке — одновременно системный промпт классификатора.

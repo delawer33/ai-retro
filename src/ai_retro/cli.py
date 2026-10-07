@@ -23,6 +23,7 @@ from ai_retro.label.service import (
     pending_items,
     pending_relabel_items,
     render_item,
+    returned_count,
     save_label,
 )
 from ai_retro.llm import claude_version, make_claude_call
@@ -100,6 +101,11 @@ def label_command(
             if added:
                 typer.echo(f"В выборку добавлено эпизодов: {added}")
             items = pending_items(engine)
+            returned = returned_count(engine)
+            if returned:
+                typer.echo(
+                    f"Вернулось в разметку после отмены категории «вызов скилла»: {returned}"
+                )
         if not items:
             typer.echo("Размечать нечего.")
             return
