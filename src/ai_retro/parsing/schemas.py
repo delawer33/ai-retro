@@ -16,6 +16,9 @@ class Record:
     text: str | None  # то, что написал пользователь; None для всего остального
     source: Path
     agent_text: str | None = None  # текст ответа агента; None для не-assistant и без текста
+    is_command: bool = False  # text — вызов слэш-команды («/имя аргументы»)
+    is_interrupt: bool = False  # «[Request interrupted by user]»: не реплика, а признак
+    is_rejection: bool = False  # отказ пользователя в вызове инструмента; text — причина, если есть
 
 
 @dataclass(frozen=True)
@@ -46,3 +49,4 @@ class EpisodeDraft:
     text: str
     context: str | None
     signals: tuple[str, ...]
+    category: str | None = None  # выставлена без модели (вызов слэш-команды)
