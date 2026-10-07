@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, delete, select
 from sqlalchemy.orm import Session
 
 from ai_retro.classify.service import (
@@ -13,7 +13,13 @@ from ai_retro.classify.service import (
     build_prompt,
     classify_many,
 )
-from ai_retro.db.models import ClassificationRow, EpisodeRow
+from ai_retro.db.models import (
+    ClassificationRow,
+    EpisodeRow,
+    GoldLabelRow,
+    GoldReturnedRow,
+    GoldSampleRow,
+)
 from ai_retro.domain.service import OTHER, assign_domains, is_scratch
 from ai_retro.errors import InvalidSinceError, LogsDirNotFoundError
 from ai_retro.llm import ModelCall
@@ -27,9 +33,19 @@ _UNITS = {"h": timedelta(hours=1), "d": timedelta(days=1), "w": timedelta(weeks=
 
 
 @dataclass(frozen=True)
+class Review:
+    """Итог пересмотра сохранённых эпизодов по текущим правилам фильтра (ADR 0010)."""
+
+    removed: int = 0
+    updated: int = 0
+    removed_gold_labels: int = 0
+
+
+@dataclass(frozen=True)
 class ScanResult:
     found: int
     classified: int
+    review: Review = Review()
 
 
 def parse_since(value: str, *, now: datetime) -> datetime:
@@ -51,6 +67,7 @@ def scan(
     announce: Callable[[int], None] | None = None,
     domain_rules: list[tuple[Path, str]] | None = None,
     domain_call: ModelCall | None = None,
+    reviewed: Callable[[Review], None] | None = None,
 ) -> ScanResult:
     if not logs_dir.is_dir():
         raise LogsDirNotFoundError(logs_dir)
@@ -60,13 +77,21 @@ def scan(
         for c in records_to_conversations(records)
         if not any(r.text and LOOP_MARKER in r.text for r in c.records)
     ]
-    drafts = [
-        d
-        for d in conversations_to_episodes(conversations)
-        if since is None or d.timestamp.astimezone(UTC) >= since
-    ]
+    all_drafts = conversations_to_episodes(conversations)
+    drafts = [d for d in all_drafts if since is None or d.timestamp.astimezone(UTC) >= since]
+    window_ids = {
+        c.id
+        for c in conversations
+        if since is None or any(r.timestamp.astimezone(UTC) >= since for r in c.records)
+    }
 
     with Session(engine) as session:
+        review = review_stored(
+            session, [d for d in all_drafts if d.conversation_id in window_ids], window_ids
+        )
+        session.commit()
+        if reviewed is not None:
+            reviewed(review)
         known: dict[str, str] = {}
         by_model: set[str] = set()
         for conversation_id, project, domain, decided in session.execute(
@@ -155,7 +180,47 @@ def scan(
             session.commit()
             if outcome.error is not None:
                 raise outcome.error
-    return ScanResult(found=len(drafts), classified=classified)
+    return ScanResult(found=len(drafts), classified=classified, review=review)
+
+
+def review_stored(
+    session: Session, current: list[EpisodeDraft], conversation_ids: set[str]
+) -> Review:
+    """Сверить эпизоды в базе с пересобранными по текущим правилам.
+
+    Лишние удаляются вместе с классификациями и строками эталона; у остальных обновляются
+    текст и признаки (тот же uuid). Классификации оставшихся не трогаются.
+    """
+    by_uuid = {d.uuid: d for d in current}
+    gone: list[str] = []
+    updated = 0
+    for row in session.scalars(
+        select(EpisodeRow).where(EpisodeRow.conversation_id.in_(conversation_ids))
+    ):
+        draft = by_uuid.get(row.uuid)
+        if draft is None:
+            gone.append(row.uuid)
+            continue
+        fresh = {
+            "project": draft.project,
+            "text": draft.text,
+            "context": draft.context,
+            "signals": list(draft.signals),
+            "skill": draft.skill,
+        }
+        if any(getattr(row, name) != value for name, value in fresh.items()):
+            for name, value in fresh.items():
+                setattr(row, name, value)
+            updated += 1
+    if not gone:
+        return Review(updated=updated)
+    labels = len(
+        session.scalars(select(GoldLabelRow.id).where(GoldLabelRow.episode_uuid.in_(gone))).all()
+    )
+    for table in (ClassificationRow, GoldLabelRow, GoldReturnedRow, GoldSampleRow):
+        session.execute(delete(table).where(table.episode_uuid.in_(gone)))
+    session.execute(delete(EpisodeRow).where(EpisodeRow.uuid.in_(gone)))
+    return Review(removed=len(gone), updated=updated, removed_gold_labels=labels)
 
 
 def _episode_input(draft: EpisodeDraft) -> EpisodeInput:
