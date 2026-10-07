@@ -114,3 +114,63 @@ def test_scan_rewind_stores_signal_and_stays_idempotent(engine: Engine, tmp_path
         assert row.signals == ["rewind"]
         assert "старая" in (row.context or "")
         assert _count(engine, EpisodeRow) == 3
+
+
+def _three_episodes(tmp_path: Path) -> Path:
+    project = tmp_path / "logs" / "-p"
+    project.mkdir(parents=True)
+    for i, text in enumerate(["первая", "вторая", "третья"]):
+        (project / f"s{i}.jsonl").write_text(
+            user_line(f"u{i}", text, f"2026-09-25T11:0{i}:00.000Z") + "\n", encoding="utf-8"
+        )
+    return tmp_path / "logs"
+
+
+def test_scan_skips_schema_miss_and_reports_it(
+    engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logs = _three_episodes(tmp_path)
+
+    def model(prompt: str) -> str:
+        if "Реплика пользователя" in prompt and "вторая" in prompt:
+            return "Я не могу вызвать StructuredOutput"
+        return json.dumps({"category": "запрос", "gist": ""})
+
+    monkeypatch.setenv("AI_RETRO_LOGS_DIR", str(logs))
+    monkeypatch.setenv("AI_RETRO_DB_PATH", str(tmp_path / "db" / "x.db"))
+    monkeypatch.setattr("ai_retro.cli.make_claude_call", lambda **_: model)
+    result = CliRunner().invoke(app, ["scan"])
+    assert result.exit_code == 0, result.output
+    assert "Не классифицировано: 1 (ответ не по схеме)" in result.output
+    assert "классифицировано: 2" in result.output
+
+
+def test_scan_retries_schema_miss_once(engine: Engine, tmp_path: Path) -> None:
+    logs = _three_episodes(tmp_path)
+    attempts: dict[str, int] = {}
+
+    def model(prompt: str) -> str:
+        attempts[prompt] = attempts.get(prompt, 0) + 1
+        if "вторая" in prompt and attempts[prompt] == 1:
+            return "текст"
+        return json.dumps({"category": "запрос", "gist": ""})
+
+    result = scan(engine, model, logs_dir=logs, since=None, threads=1, classifier_version="v")
+    assert (result.classified, result.unclassified) == (3, 0)
+    assert sum(attempts.values()) == 4
+
+
+def test_cli_unrecognized_model_still_aborts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from ai_retro.errors import UnrecognizedModelError
+
+    def model(_: str) -> str:
+        raise UnrecognizedModelError("nope")
+
+    monkeypatch.setenv("AI_RETRO_LOGS_DIR", str(_three_episodes(tmp_path)))
+    monkeypatch.setenv("AI_RETRO_DB_PATH", str(tmp_path / "db" / "x.db"))
+    monkeypatch.setattr("ai_retro.cli.make_claude_call", lambda **_: model)
+    result = CliRunner().invoke(app, ["scan"])
+    assert result.exit_code == 1
+    assert "не опознана" in result.output

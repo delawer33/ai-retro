@@ -30,6 +30,7 @@ _UNITS = {"h": timedelta(hours=1), "d": timedelta(days=1), "w": timedelta(weeks=
 class ScanResult:
     found: int
     classified: int
+    unclassified: int = 0
 
 
 def parse_since(value: str, *, now: datetime) -> datetime:
@@ -136,6 +137,7 @@ def scan(
                 )
         session.commit()
         classified = 0
+        unclassified = 0
         for start in range(0, len(todo), BATCH_SIZE):
             batch = [
                 (d.uuid, build_prompt(_episode_input(d), context_chars=context_chars))
@@ -152,10 +154,11 @@ def scan(
                     )
                 )
                 classified += 1
+            unclassified += len(outcome.unclassified)
             session.commit()
             if outcome.error is not None:
                 raise outcome.error
-    return ScanResult(found=len(drafts), classified=classified)
+    return ScanResult(found=len(drafts), classified=classified, unclassified=unclassified)
 
 
 def _episode_input(draft: EpisodeDraft) -> EpisodeInput:

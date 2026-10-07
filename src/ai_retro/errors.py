@@ -18,6 +18,10 @@ class ModelCallError(AiRetroError):
     pass
 
 
+class ClassifierSchemaError(ModelCallError):
+    """Ответ не по схеме: разовый сбой модели, на другом эпизоде повторять не обязан."""
+
+
 class UnrecognizedModelError(ModelCallError):
     def __init__(self, model: str) -> None:
         super().__init__(
