@@ -325,31 +325,70 @@ SCRATCH = "/home/u/.config/Claude/scratch-workspaces/abc"
 
 
 def test_target_one_project_is_that_projects_claude_md() -> None:
-    target = choose_target(pattern_of(item("a", "c1"), item("b", "c2"), item("c", "c3")))
+    target = choose_target(
+        pattern_of(item("a", "c1"), item("b", "c2"), item("c", "c3")), skills_dir=NO_SKILLS
+    )
     assert (target.kind, target.file) == (TARGET_PROJECT, "/work/proj/CLAUDE.md")
 
 
 def test_target_different_projects_is_global() -> None:
     target = choose_target(
-        pattern_of(item("a", "c1", "/work/a"), item("b", "c2", "/work/b"), item("c", "c3"))
+        pattern_of(item("a", "c1", "/work/a"), item("b", "c2", "/work/b"), item("c", "c3")),
+        skills_dir=NO_SKILLS,
     )
     assert (target.kind, target.file) == (TARGET_GLOBAL, "~/.claude/CLAUDE.md")
 
 
 def test_target_scratch_is_global_even_if_one_path() -> None:
     items = [item(f"e{i}", f"c{i}", SCRATCH) for i in range(3)]
-    assert choose_target(pattern_of(*items)).kind == TARGET_GLOBAL
+    assert choose_target(pattern_of(*items), skills_dir=NO_SKILLS).kind == TARGET_GLOBAL
 
 
-def test_target_skill_when_most_episodes_follow_one_skill() -> None:
+def test_target_skill_when_most_episodes_follow_one_skill(tmp_path: Path) -> None:
     items = [item("a", "c1", skill="feat"), item("b", "c2", skill="feat"), item("c", "c3")]
-    target = choose_target(pattern_of(*items))
-    assert (target.kind, target.file) == (TARGET_SKILL, "~/.claude/skills/feat/SKILL.md")
+    skills = make_skill(tmp_path / "skills", "feat")
+    target = choose_target(pattern_of(*items), skills_dir=skills)
+    assert (target.kind, target.file) == (TARGET_SKILL, str(skills / "feat" / "SKILL.md"))
 
 
 def test_target_skill_needs_a_majority() -> None:
     items = [item("a", "c1", skill="feat"), item("b", "c2"), item("c", "c3"), item("d", "c4")]
-    assert choose_target(pattern_of(*items)).kind == TARGET_PROJECT
+    assert choose_target(pattern_of(*items), skills_dir=NO_SKILLS).kind == TARGET_PROJECT
+
+
+def test_target_is_the_found_skill_file_on_all_three_branches(tmp_path: Path) -> None:
+    project = tmp_path / "proj"
+    items = [item(f"e{i}", f"c{i}", str(project), skill="feat") for i in range(3)]
+    pattern = pattern_of(*items)
+    global_root = make_skill(tmp_path / "global", "feat")
+    project_skill = project / ".claude" / "skills" / "feat" / "SKILL.md"
+
+    # нестандартный корень: цель — найденный файл
+    target = choose_target(pattern, skills_dir=global_root)
+    assert (target.kind, target.file) == (TARGET_SKILL, str(global_root / "feat" / "SKILL.md"))
+    assert Path(target.file).is_file()
+
+    # скилл проекта идёт первым и печатается абсолютным путём
+    make_skill(project / ".claude" / "skills", "feat")
+    target = choose_target(pattern, skills_dir=global_root)
+    assert (target.kind, target.file) == (TARGET_SKILL, str(project_skill))
+    assert Path(target.file).is_file()
+
+    # SKILL.md не найден: CLAUDE.md проекта (ADR 0007)
+    project_skill.unlink()
+    (global_root / "feat" / "SKILL.md").unlink()
+    target = choose_target(pattern, skills_dir=global_root)
+    assert (target.kind, target.file) == (TARGET_PROJECT, str(project / "CLAUDE.md"))
+
+
+def test_skill_under_home_is_printed_with_tilde(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    items = [item(f"e{i}", f"c{i}", skill="feat") for i in range(3)]
+    skills = make_skill(tmp_path / ".claude" / "skills", "feat")
+    target = choose_target(pattern_of(*items), skills_dir=skills)
+    assert target.file == "~/.claude/skills/feat/SKILL.md"
 
 
 def seed_skill_conversation(engine: Engine) -> None:
@@ -385,7 +424,7 @@ def test_skill_missing_on_disk_is_not_a_target(engine: Engine, tmp_path: Path) -
         engine, since=None, classifier_version=VERSION, skills_dir=tmp_path / "empty"
     )
     assert [i.skill for i in items] == [None, None, None]
-    target = choose_target(pattern_of(*items))
+    target = choose_target(pattern_of(*items), skills_dir=tmp_path / "empty")
     assert target.kind == TARGET_PROJECT
     assert target.file.endswith("CLAUDE.md")
 
