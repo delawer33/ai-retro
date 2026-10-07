@@ -21,12 +21,14 @@ _CONTEXT_LIMIT = 1000
 _NOT_REPLY_PREFIXES = (
     "<task-notification",
     "<local-command-",
+    "<artifact-view-context",  # незакрытый блок: слов пользователя в нём нет
     "<bash-input",
     "<bash-stdout",
     "<bash-stderr",
     "This session is being continued from a previous conversation",
 )
-_SYSTEM_REMINDER = re.compile(r"<system-reminder>.*?</system-reminder>", re.DOTALL)
+# Служебные блоки харнесса, которые вырезаются из текста: слова пользователя рядом остаются.
+_HARNESS_BLOCK = re.compile(r"<(system-reminder|artifact-view-context)\b[^>]*>.*?</\1>", re.DOTALL)
 _COMMAND = re.compile(
     r"(?:<command-message>.*?</command-message>\s*)?<command-name>(.*?)</command-name>", re.DOTALL
 )
@@ -44,11 +46,11 @@ class CleanedReply:
 def clean_reply(text: str) -> CleanedReply:
     """Очистить текст реплики от подмешанного харнессом.
 
-    `<system-reminder>` убирается блоком; `<command-*>` становится «/имя аргументы»;
+    `<system-reminder>` и `<artifact-view-context>` убираются блоком; `<command-*>` становится «/имя аргументы»;
     `<pasted_content>` — «[вставка N символов]». Уведомления задач, вывод локальных команд,
     compact-сводка и маркер прерывания реплики не дают.
     """
-    stripped = _SYSTEM_REMINDER.sub("", text).strip()
+    stripped = _HARNESS_BLOCK.sub("", text).strip()
     if not stripped:
         return CleanedReply(None)
     if stripped == INTERRUPT_MARKER:
