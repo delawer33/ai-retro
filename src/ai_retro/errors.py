@@ -18,6 +18,10 @@ class ModelCallError(AiRetroError):
     pass
 
 
+class ModelTimeoutError(ModelCallError):
+    """Вызов `claude` завис: временный сбой одного вызова, на следующем может пройти."""
+
+
 class ClassifierSchemaError(ModelCallError):
     """Ответ не по схеме: разовый сбой модели, на другом эпизоде повторять не обязан."""
 

@@ -6,7 +6,12 @@ import subprocess
 from collections.abc import Callable
 from typing import Any
 
-from ai_retro.errors import ClaudeNotFoundError, ModelCallError, UnrecognizedModelError
+from ai_retro.errors import (
+    ClaudeNotFoundError,
+    ModelCallError,
+    ModelTimeoutError,
+    UnrecognizedModelError,
+)
 
 # «промпт → ответ» (JSON-строка по схеме); передаётся сервисам явно.
 ModelCall = Callable[[str], str]
@@ -49,7 +54,7 @@ def make_claude_call(*, system_prompt: str, json_schema: dict[str, Any], model: 
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise ModelCallError("Вызов `claude` завис: превышено время ожидания.") from exc
+            raise ModelTimeoutError("Вызов `claude` завис: превышено время ожидания.") from exc
         if proc.returncode != 0:
             _raise_if_unrecognized_model(proc.stdout + proc.stderr, model)
             raise ModelCallError(

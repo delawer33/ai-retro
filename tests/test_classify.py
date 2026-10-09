@@ -20,7 +20,7 @@ from ai_retro.classify.service import (
 from ai_retro.cli import app
 from ai_retro.config import Settings
 from ai_retro.db.models import ClassificationRow
-from ai_retro.errors import UnrecognizedModelError
+from ai_retro.errors import ModelTimeoutError, UnrecognizedModelError
 from ai_retro.scan.service import scan
 from tests.conftest import NO_SKILLS
 
@@ -103,6 +103,31 @@ def test_classify_many_retries_schema_miss_once() -> None:
 def test_classify_many_skips_after_second_schema_miss() -> None:
     outcome = classify_many(lambda _: "текст", [("a", "p")], threads=1)
     assert outcome.results == {}
+    assert outcome.unclassified == ["a"]
+    assert outcome.error is None
+
+
+def test_classify_many_retries_timeout_once() -> None:
+    attempts = 0
+
+    def call(_: str) -> str:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise ModelTimeoutError("завис")
+        return OK
+
+    outcome = classify_many(call, [("a", "p")], threads=1)
+    assert set(outcome.results) == {"a"}
+    assert outcome.unclassified == []
+    assert attempts == 2
+
+
+def test_classify_many_skips_after_second_timeout() -> None:
+    def call(_: str) -> str:
+        raise ModelTimeoutError("завис")
+
+    outcome = classify_many(call, [("a", "p")], threads=1)
     assert outcome.unclassified == ["a"]
     assert outcome.error is None
 

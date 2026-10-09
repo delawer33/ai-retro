@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ai_retro.db.models import ClassificationRow
-from ai_retro.errors import AiRetroError, ClassifierSchemaError
+from ai_retro.errors import AiRetroError, ClassifierSchemaError, ModelTimeoutError
 from ai_retro.llm import ModelCall
 
 CATEGORIES = ("поправка", "инструкция", "запрос", "нейтрально")
@@ -92,17 +92,17 @@ def classify_episode(call: ModelCall, prompt: str) -> Classification:
 
 
 def classify_with_retry(call: ModelCall, prompt: str) -> Classification:
-    """Ответ не по схеме — один повтор; второй раз не по схеме — ошибка уходит наверх."""
+    """Ответ не по схеме или таймаут — один повтор; второй сбой уходит наверх (ADR 0010)."""
     try:
         return classify_episode(call, prompt)
-    except ClassifierSchemaError:
+    except (ClassifierSchemaError, ModelTimeoutError):
         return classify_episode(call, prompt)
 
 
 @dataclass
 class BatchOutcome:
     results: dict[str, Classification] = field(default_factory=dict)
-    # Ответ не по схеме и на повторе (ADR 0010): эпизод остаётся без классификации.
+    # Ответ не по схеме или таймаут и на повторе (ADR 0010): эпизод остаётся без классификации.
     unclassified: list[str] = field(default_factory=list)
     error: AiRetroError | None = None
 
@@ -110,7 +110,8 @@ class BatchOutcome:
 def classify_many(
     call: ModelCall, items: Sequence[tuple[str, str]], *, threads: int
 ) -> BatchOutcome:
-    """items: (uuid, prompt). Ответ не по схеме после повтора пропускается (unclassified).
+    """items: (uuid, prompt). Ответ не по схеме или таймаут после повтора пропускается
+    (unclassified).
     Первая другая ошибка (вызов невозможен) останавливает запуск новых вызовов, но уже
     полученные результаты возвращаются: вызывающий сохраняет их и только потом падает."""
     outcome = BatchOutcome()
@@ -121,7 +122,7 @@ def classify_many(
                 continue
             try:
                 outcome.results[futures[future]] = future.result()
-            except ClassifierSchemaError:
+            except (ClassifierSchemaError, ModelTimeoutError):
                 outcome.unclassified.append(futures[future])
             except AiRetroError as exc:
                 if outcome.error is None:

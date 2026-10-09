@@ -91,7 +91,7 @@ def scan_command(
         raise typer.Exit(1) from exc
     typer.echo(f"Эпизодов найдено: {result.found}, классифицировано: {result.classified}")
     if result.unclassified:
-        typer.echo(f"Не классифицировано: {result.unclassified} (ответ не по схеме)")
+        typer.echo(f"Не классифицировано: {result.unclassified} (ответ не по схеме или таймаут)")
 
 
 @app.command("label")

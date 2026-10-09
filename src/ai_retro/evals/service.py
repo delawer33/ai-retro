@@ -126,7 +126,7 @@ def _model_categories(
         raise outcome.error
     if outcome.unclassified:
         raise ClassifierSchemaError(
-            f"Ответ не по схеме на повторе у {len(outcome.unclassified)} эпизодов: "
+            f"Ответ не по схеме или таймаут на повторе у {len(outcome.unclassified)} эпизодов: "
             "оценка без них исказит метрики. Повтори запуск."
         )
     return categories
