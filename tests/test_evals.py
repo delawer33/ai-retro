@@ -287,3 +287,10 @@ def test_eval_refresh_twice_does_not_grow_classifications(engine: Engine) -> Non
         run_eval(engine, call, model="haiku", claude_version="1", refresh=True)
     with Session(engine) as s:
         assert len(list(s.scalars(select(ClassificationRow)))) == 1
+
+
+def test_confusion_header_is_separated_from_categories(engine: Engine) -> None:
+    _add(engine, "d1", "поправка", "запрос", text="нет")
+    header = next(ln for ln in render(_run(engine)).splitlines() if "человек \\" in ln)
+    assert "модель " in header
+    assert "модельпоправка" not in header

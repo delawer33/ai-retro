@@ -278,6 +278,27 @@ def test_scan_review_removes_junk_with_classification(engine: Engine, logs_dir: 
         ).all()
 
 
+def test_scan_review_removes_builtin_command_episode(engine: Engine, tmp_path: Path) -> None:
+    command = "<command-message>compact</command-message>\n<command-name>/compact</command-name>"
+    with Session(engine) as s:
+        s.add(_stale("cmd"))
+        s.add(
+            ClassificationRow(
+                episode_uuid="cmd", category="поправка", gist="g", classifier_version="v"
+            )
+        )
+        s.commit()
+    project = tmp_path / "logs" / "-p"
+    project.mkdir(parents=True)
+    line = user_line("cmd", command, "2026-09-25T11:00:00.000Z")
+    (project / "s1.jsonl").write_text(line, encoding="utf-8")
+    result = _scan(engine, FakeModel(), tmp_path / "logs")
+    assert result.review.removed == 1
+    with Session(engine) as s:
+        assert s.get(EpisodeRow, "cmd") is None
+        assert not s.scalars(select(ClassificationRow)).all()
+
+
 def test_scan_review_removes_artifact_view_context_episode(engine: Engine, logs_dir: Path) -> None:
     stale = _stale("junk")
     stale.text = (

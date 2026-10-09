@@ -356,7 +356,7 @@ def test_quoted_command_tag_is_plain_episode(tmp_path: Path) -> None:
     assert [(r.text, r.is_command) for r in records] == [(text, False)]
 
 
-def test_builtin_command_is_plain_reply_without_signal(tmp_path: Path) -> None:
+def test_builtin_command_is_not_an_episode(tmp_path: Path) -> None:
     def command(name: str, args: str) -> str:
         return (
             f"<command-message>{name}</command-message>\n<command-name>/{name}</command-name>\n"
@@ -365,12 +365,12 @@ def test_builtin_command_is_plain_reply_without_signal(tmp_path: Path) -> None:
 
     lines = [
         user_line("u1", command("compact", ""), _ts(0)),
-        user_line("u2", command("py-setup", "спека"), _ts(1)),
+        user_line("u3", command("model", "opus"), _ts(1)),
+        user_line("u2", command("py-setup", "спека"), _ts(2)),
     ]
     skills = make_skill(tmp_path / "skills", "py-setup")
     episodes = _episodes(_write(tmp_path, lines), skills)
     assert [(e.text, e.skill, e.signals, e.category) for e in episodes] == [
-        ("/compact", None, (), None),
         ("/py-setup спека", "py-setup", ("вызов скилла",), None),
     ]
 

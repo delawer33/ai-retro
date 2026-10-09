@@ -75,8 +75,9 @@ def conversations_to_episodes(
     """Эпизод — реплика пользователя; прерывание и отказ без текста уходят признаком в следующий.
 
     У первой реплики после rewind — признак и контекст (начало брошенной ветки), иначе
-    контекст — последний ответ агента. Слэш-команда без SKILL.md (`/compact`, `/model`…) —
-    обычная реплика без признака (ADR 0012).
+    контекст — последний ответ агента. Реплика целиком из слэш-команды без SKILL.md
+    (`/compact`, `/model opus`…) — встроенная команда, не эпизод (ADR 0014); с SKILL.md — эпизод
+    с признаком «вызов скилла» (ADR 0012).
     """
     drafts: list[EpisodeDraft] = []
     for conversation in conversations:
@@ -92,13 +93,15 @@ def conversations_to_episodes(
                 _add(pending, SIGNAL_REJECTION)
             if record.kind != "user" or record.text is None:
                 continue
+            name = record.text.split(maxsplit=1)[0].lstrip("/") if record.is_command else ""
+            if name and not skill_exists(name, record.project, skills_dir=skills_dir):
+                continue  # встроенная команда (`/compact`, `/model opus`…) — не реплика (ADR 0014)
             rewind = rewinds.get(record.uuid)
             if rewind is not None:
                 _add(pending, REWIND)
             skill: str | None = None
             category: str | None = None
-            name = record.text.split(maxsplit=1)[0].lstrip("/") if record.is_command else ""
-            if name and skill_exists(name, record.project, skills_dir=skills_dir):
+            if name:
                 skill = name
                 _add(pending, SIGNAL_SKILL)
                 if not skill_arguments(record.text):
