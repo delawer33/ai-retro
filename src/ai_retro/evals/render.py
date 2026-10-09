@@ -16,11 +16,13 @@ def _delta(value: float | None) -> str:
 
 
 def _confusion(metrics: Metrics) -> list[str]:
+    corner = "человек \\ модель"
     width = max(len(c) for c in CATEGORIES) + 2
-    lines = ["человек \\ модель".ljust(width) + "".join(c.ljust(width) for c in CATEGORIES)]
+    first = max(len(corner), width) + 2
+    lines = [corner.ljust(first) + "".join(c.ljust(width) for c in CATEGORIES)]
     for human in CATEGORIES:
         row = (str(metrics.confusion.get((human, model), 0)) for model in CATEGORIES)
-        lines.append(human.ljust(width) + "".join(v.ljust(width) for v in row))
+        lines.append(human.ljust(first) + "".join(v.ljust(width) for v in row))
     return lines
 
 
