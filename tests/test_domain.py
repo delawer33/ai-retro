@@ -13,7 +13,13 @@ from ai_retro.domain.service import (
     is_scratch,
     parse_rules,
 )
-from ai_retro.errors import InvalidDomainRulesError, ModelCallError, UnrecognizedModelError
+from ai_retro.errors import (
+    InvalidDomainRulesError,
+    ModelCallError,
+    ModelTimeoutError,
+    UnrecognizedModelError,
+)
+from ai_retro.llm import ModelCall
 from ai_retro.scan.service import scan
 from tests.conftest import NO_SKILLS, user_line
 
@@ -38,7 +44,7 @@ class DomainModel:
         return json.dumps({"domain": self.answer})
 
 
-def _scan(engine: Engine, logs: Path, model: DomainModel) -> None:
+def _scan(engine: Engine, logs: Path, model: ModelCall) -> None:
     scan(
         engine,
         lambda _: json.dumps({"category": "запрос", "gist": "g"}),
@@ -81,6 +87,19 @@ def test_is_scratch() -> None:
 def test_domain_by_model_rejects_bad_answer() -> None:
     with pytest.raises(ModelCallError):
         domain_by_model(lambda _: json.dumps({"domain": "погода"}), "привет")
+
+
+def test_domain_timeout_leaves_conversation_undecided(engine: Engine, tmp_path: Path) -> None:
+    logs = tmp_path / "logs"
+    _log(logs, "b", "/home/u/.config/Claude/scratch-workspaces/w1/w2/scratch-1", "о смысле")
+
+    def timing_out(_: str) -> str:
+        raise ModelTimeoutError("завис")
+
+    _scan(engine, logs, timing_out)
+    with Session(engine) as session:
+        flags = list(session.scalars(select(EpisodeRow.domain_by_model)))
+    assert flags == [False]
 
 
 def test_scan_assigns_domains(engine: Engine, tmp_path: Path) -> None:

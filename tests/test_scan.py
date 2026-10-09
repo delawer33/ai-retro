@@ -16,7 +16,7 @@ from ai_retro.db.models import (
     GoldReturnedRow,
     GoldSampleRow,
 )
-from ai_retro.errors import ModelCallError
+from ai_retro.errors import ModelCallError, ModelTimeoutError
 from ai_retro.scan.service import Review, ScanResult, parse_since, scan
 from tests.conftest import NO_SKILLS, user_line
 
@@ -181,8 +181,49 @@ def test_scan_skips_schema_miss_and_reports_it(
     monkeypatch.setattr("ai_retro.cli.make_claude_call", lambda **_: model)
     result = CliRunner().invoke(app, ["scan"])
     assert result.exit_code == 0, result.output
-    assert "Не классифицировано: 1 (ответ не по схеме)" in result.output
+    assert "Не классифицировано: 1 (ответ не по схеме или таймаут)" in result.output
     assert "классифицировано: 2" in result.output
+
+
+def test_scan_skips_timeout_and_reports_it(
+    engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    logs = _three_episodes(tmp_path)
+
+    def model(prompt: str) -> str:
+        if "вторая" in prompt:
+            raise ModelTimeoutError("завис")
+        return json.dumps({"category": "запрос", "gist": ""})
+
+    monkeypatch.setenv("AI_RETRO_LOGS_DIR", str(logs))
+    monkeypatch.setenv("AI_RETRO_DB_PATH", str(tmp_path / "db" / "x.db"))
+    monkeypatch.setattr("ai_retro.cli.make_claude_call", lambda **_: model)
+    result = CliRunner().invoke(app, ["scan"])
+    assert result.exit_code == 0, result.output
+    assert "Не классифицировано: 1 " in result.output
+    assert "классифицировано: 2" in result.output
+
+
+def test_scan_retries_timeout_once(engine: Engine, tmp_path: Path) -> None:
+    logs = _three_episodes(tmp_path)
+    attempts: dict[str, int] = {}
+
+    def model(prompt: str) -> str:
+        attempts[prompt] = attempts.get(prompt, 0) + 1
+        if "вторая" in prompt and attempts[prompt] == 1:
+            raise ModelTimeoutError("завис")
+        return json.dumps({"category": "запрос", "gist": ""})
+
+    result = scan(
+        engine,
+        model,
+        logs_dir=logs,
+        since=None,
+        threads=1,
+        classifier_version="v",
+        skills_dir=NO_SKILLS,
+    )
+    assert (result.classified, result.unclassified) == (3, 0)
 
 
 def test_scan_retries_schema_miss_once(engine: Engine, tmp_path: Path) -> None:
