@@ -319,8 +319,16 @@ def test_scan_review_removes_junk_with_classification(engine: Engine, logs_dir: 
         ).all()
 
 
-def test_scan_review_removes_builtin_command_episode(engine: Engine, tmp_path: Path) -> None:
-    command = "<command-message>compact</command-message>\n<command-name>/compact</command-name>"
+@pytest.mark.parametrize(
+    "command",
+    [
+        "<command-message>compact</command-message>\n<command-name>/compact</command-name>",
+        "/compact",
+    ],
+)
+def test_scan_review_removes_builtin_command_episode(
+    engine: Engine, tmp_path: Path, command: str
+) -> None:
     with Session(engine) as s:
         s.add(_stale("cmd"))
         s.add(

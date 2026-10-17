@@ -367,11 +367,17 @@ def test_builtin_command_is_not_an_episode(tmp_path: Path) -> None:
         user_line("u1", command("compact", ""), _ts(0)),
         user_line("u3", command("model", "opus"), _ts(1)),
         user_line("u2", command("py-setup", "спека"), _ts(2)),
+        user_line("u4", "/compact", _ts(3)),
+        user_line("u5", "/model opus", _ts(4)),
+        user_line("u6", "/py-setup спека 2", _ts(5)),
+        user_line("u7", "/etc/hosts посмотри", _ts(6)),
     ]
     skills = make_skill(tmp_path / "skills", "py-setup")
     episodes = _episodes(_write(tmp_path, lines), skills)
     assert [(e.text, e.skill, e.signals, e.category) for e in episodes] == [
         ("/py-setup спека", "py-setup", ("вызов скилла",), None),
+        ("/py-setup спека 2", "py-setup", ("вызов скилла",), None),
+        ("/etc/hosts посмотри", None, (), None),
     ]
 
 

@@ -32,6 +32,8 @@ _HARNESS_BLOCK = re.compile(r"<(system-reminder|artifact-view-context)\b[^>]*>.*
 _COMMAND = re.compile(
     r"(?:<command-message>.*?</command-message>\s*)?<command-name>(.*?)</command-name>", re.DOTALL
 )
+# Голая форма без обёртки: `/compact` уходит в очередь и пишется в лог просто строкой.
+_BARE_COMMAND = re.compile(r"/[\w][\w.:-]*(?:\s|$)")
 _COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
 _PASTE = re.compile(r"<pasted_content[^>]*>(.*?)</pasted_content[^>]*>", re.DOTALL)
 
@@ -46,7 +48,7 @@ class CleanedReply:
 def clean_reply(text: str) -> CleanedReply:
     """Очистить текст реплики от подмешанного харнессом.
 
-    `<system-reminder>` и `<artifact-view-context>` убираются блоком; `<command-*>` становится «/имя аргументы»;
+    `<system-reminder>` и `<artifact-view-context>` убираются блоком; `<command-*>` становится «/имя аргументы», голая «/имя аргументы» тоже команда;
     `<pasted_content>` — «[вставка N символов]». Уведомления задач, вывод локальных команд,
     compact-сводка и маркер прерывания реплики не дают.
     """
@@ -62,6 +64,8 @@ def clean_reply(text: str) -> CleanedReply:
         args = _COMMAND_ARGS.search(stripped)
         parts = [command.group(1).strip(), args.group(1).strip() if args else ""]
         return CleanedReply(_mask_pastes(" ".join(p for p in parts if p)), is_command=True)
+    if _BARE_COMMAND.match(stripped):
+        return CleanedReply(_mask_pastes(stripped), is_command=True)
     return CleanedReply(_mask_pastes(stripped))
 
 
