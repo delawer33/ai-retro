@@ -23,7 +23,6 @@ from ai_retro.report.proposals import generate_proposal, render_proposal
 from ai_retro.report.schemas import PROPOSED, STALE, GistItem, Pattern, Proposal, ReportData
 from ai_retro.report.text import example_text
 
-PATTERN_CATEGORIES = ("поправка", "инструкция")
 MIN_EPISODES = 3
 MIN_CONVERSATIONS = 2
 TOP_N = 10
@@ -35,7 +34,7 @@ PROTECTED_NAMES = frozenset({"claude.md", "skill.md"})
 
 SYSTEM_PROMPT = f"""{LOOP_MARKER}
 Тебе дан список сутей эпизодов: «номер: суть». Сгруппируй номера по смыслу: в одну группу —
-эпизоды, где пользователь поправил или сообщил одно и то же. Каждому номеру — не больше одной
+эпизоды, где пользователь поправил, уточнил или сообщил одно и то же. Каждому номеру — не больше одной
 группы; эпизоды без пары не включай. Для каждой группы дай короткое название.
 """
 
@@ -79,7 +78,8 @@ def load_report_data(
             domain = episode.domain or NO_DOMAIN
             by_cat = distribution.setdefault(domain, {})
             by_cat[cls.category] = by_cat.get(cls.category, 0) + 1
-            if cls.category in PATTERN_CATEGORIES:
+            # В паттерны идут все эпизоды с сутью: поправки, инструкции, уточняющие запросы (ADR 0016)
+            if cls.gist.strip():
                 items.append(
                     GistItem(
                         uuid=episode.uuid,
@@ -336,6 +336,7 @@ def render_report(data: ReportData) -> str:
             f"### {p.title}",
             "",
             f"- эпизодов: {len(p.episodes)}, бесед: {len(p.conversations)}",
+            f"- состав: {p.composition_text}",
             f"- области: {', '.join(p.domains)}",
             f"- проекты: {', '.join(p.projects)}",
             "- примеры:",

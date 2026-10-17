@@ -1,16 +1,23 @@
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
 TARGET_PROJECT = "project"
 TARGET_GLOBAL = "global"
 TARGET_SKILL = "skill"
+# Состав паттерна: категория эпизода -> как её видно в отчёте. Запрос с сутью — уточняющий.
+COMPOSITION_LABELS = {
+    "поправка": "поправок",
+    "инструкция": "инструкций",
+    "запрос": "уточняющих запросов",
+}
 PROPOSED = "proposed"
 STALE = "stale"
 
 
 @dataclass(frozen=True)
 class GistItem:
-    """Эпизод поправки или инструкции, пошедший в группировку по сутям."""
+    """Эпизод с сутью (поправка, инструкция, уточняющий запрос), пошедший в группировку по сутям."""
 
     uuid: str
     conversation_id: str
@@ -52,6 +59,20 @@ class Pattern:
     @property
     def conversations(self) -> frozenset[str]:
         return frozenset(e.conversation_id for e in self.episodes)
+
+    @property
+    def composition(self) -> dict[str, int]:
+        """Эпизоды по категориям, в порядке поправка, инструкция, запрос; пустые опущены."""
+        counts = Counter(e.category for e in self.episodes)
+        return {c: counts[c] for c in COMPOSITION_LABELS if counts[c]}
+
+    @property
+    def composition_text(self) -> str:
+        return ", ".join(f"{n} {COMPOSITION_LABELS[c]}" for c, n in self.composition.items())
+
+    @property
+    def only_clarifications(self) -> bool:
+        return set(self.composition) == {"запрос"}
 
     @property
     def domains(self) -> tuple[str, ...]:

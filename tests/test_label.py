@@ -35,7 +35,7 @@ def _candidates() -> list[Candidate]:
                 uuid=f"e{i}",
                 conversation_id=f"c{i // 5}",
                 project=f"p{i % 7}",
-                has_signals=kind == 0,
+                signals=("прерывание",) if kind == 0 else (),
                 model_category="нейтрально" if kind == 3 else "запрос",
             )
         )
@@ -64,15 +64,12 @@ def test_split_is_deterministic_and_about_30_percent_test() -> None:
 
 
 def test_sample_takes_what_exists_when_stratum_is_short() -> None:
-    few = [
-        Candidate(f"e{i}", f"c{i}", "p", has_signals=False, model_category="запрос")
-        for i in range(10)
-    ]
+    few = [Candidate(f"e{i}", f"c{i}", "p", signals=(), model_category="запрос") for i in range(10)]
     assert len(draw_sample(few)) == 10
 
 
 def test_unclassified_without_signals_is_not_sampled() -> None:
-    c = Candidate("x", "c", "p", has_signals=False, model_category=None)
+    c = Candidate("x", "c", "p", signals=(), model_category=None)
     assert draw_sample([c]) == []
 
 
@@ -103,19 +100,19 @@ def _fill(engine: Engine, n: int = 30) -> None:
 
 def test_resume_starts_from_first_unlabeled(engine: Engine) -> None:
     _fill(engine)
-    assert ensure_sample(engine, size=10) == 10
+    assert ensure_sample(engine, size=10).added == 10
     items = pending_items(engine)
     save_label(engine, items[0].uuid, "запрос", relabel=False, now=NOW)
     save_label(engine, items[1].uuid, "запрос", relabel=False, now=NOW)
     assert [i.uuid for i in pending_items(engine)] == [i.uuid for i in items[2:]]
-    assert ensure_sample(engine, size=10) == 0  # выборка не пересоздаётся
+    assert ensure_sample(engine, size=10).added == 0  # выборка не пересоздаётся
 
 
 def test_extend_adds_new_episodes(engine: Engine) -> None:
     _fill(engine)
     ensure_sample(engine, size=10)
     before = {i.uuid for i in pending_items(engine)}
-    assert ensure_sample(engine, size=10, extend=True) > 0
+    assert ensure_sample(engine, size=10, extend=True).added > 0
     assert before < {i.uuid for i in pending_items(engine)}
 
 
@@ -215,3 +212,35 @@ def test_candidates_use_latest_classification(engine: Engine) -> None:
             )
         s.commit()
     assert [c.model_category for c in load_candidates(engine)] == ["поправка"]
+
+
+def test_signal_stratum_prefers_interrupt_and_rejection_over_skill_call() -> None:
+    skill = [
+        Candidate(f"s{i}", f"cs{i}", "p", signals=("вызов скилла",), model_category=None)
+        for i in range(60)
+    ]
+    corrections = [
+        Candidate(f"i{i}", f"ci{i}", "p", signals=("прерывание",), model_category=None)
+        for i in range(20)
+    ] + [
+        Candidate(f"r{i}", f"cr{i}", "p", signals=("отказ", "вызов скилла"), model_category=None)
+        for i in range(10)
+    ]
+    rewinds = [
+        Candidate(f"w{i}", f"cw{i}", "p", signals=("rewind",), model_category=None)
+        for i in range(10)
+    ]
+    sample = draw_sample(skill + rewinds + corrections, size=100)
+    uuids = {c.uuid for c, _ in sample}
+    assert len(uuids) == 40
+    assert {u for u in uuids if u[0] in "ir"} == {c.uuid for c in corrections}
+    assert {u for u in uuids if u[0] == "w"} == {c.uuid for c in rewinds}
+    assert not any(u[0] == "s" for u in uuids)
+
+
+def test_extend_reports_composition_by_strata(engine: Engine) -> None:
+    _fill(engine)
+    ensure_sample(engine, size=10)
+    result = ensure_sample(engine, size=10, extend=True)
+    assert sum(result.by_stratum) == result.added
+    assert "с признаками" in result.composition()

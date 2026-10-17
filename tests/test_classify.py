@@ -14,6 +14,7 @@ from ai_retro.classify.service import (
     EpisodeInput,
     build_prompt,
     classifier_version,
+    classify_episode,
     classify_many,
     prompt_sha,
 )
@@ -42,6 +43,27 @@ def test_guide_has_qa_edge_cases() -> None:
     assert "в этом разговоре" in SYSTEM_PROMPT
     assert "по форме реплики, не по теме" in SYSTEM_PROMPT
     assert "не повторяет" in SYSTEM_PROMPT
+
+
+def test_guide_narrows_correction_and_defines_clarifying_request() -> None:
+    assert "явная претензия" in SYSTEM_PROMPT
+    assert "не тезисами, а абзацами" in SYSTEM_PROMPT
+    assert "Уточняющий запрос" in SYSTEM_PROMPT
+    assert "# Суть" in SYSTEM_PROMPT
+    assert "голое согласие" in SYSTEM_PROMPT
+    assert "«продолжай»" in SYSTEM_PROMPT
+    assert "с новой строки" in SYSTEM_PROMPT
+
+
+def test_request_keeps_gist_and_neutral_drops_it() -> None:
+    kept = classify_episode(
+        lambda _: json.dumps({"category": "запрос", "gist": "хочет абзацы, не тезисы"}), "p"
+    )
+    assert (kept.category, kept.gist) == ("запрос", "хочет абзацы, не тезисы")
+    dropped = classify_episode(
+        lambda _: json.dumps({"category": "нейтрально", "gist": "что-то"}), "p"
+    )
+    assert (dropped.category, dropped.gist) == ("нейтрально", "")
 
 
 def test_prompt_sha_matches_git_hash_object() -> None:

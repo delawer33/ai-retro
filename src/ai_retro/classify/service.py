@@ -13,6 +13,8 @@ from ai_retro.errors import AiRetroError, ClassifierSchemaError, ModelTimeoutErr
 from ai_retro.llm import ModelCall
 
 CATEGORIES = ("поправка", "инструкция", "запрос", "нейтрально")
+# Суть допускается у этих категорий (ADR 0016); у запроса она есть лишь у уточняющего.
+GIST_CATEGORIES = ("поправка", "инструкция", "запрос")
 # Страховка от петли (ADR 0002): scan пропускает беседы, где встречается маркер.
 LOOP_MARKER = "[ai-retro-classifier]"
 # Гайд по разметке — одновременно системный промпт классификатора.
@@ -88,7 +90,8 @@ def classify_episode(call: ModelCall, prompt: str) -> Classification:
         ) from exc
     if category not in CATEGORIES or not isinstance(gist, str):
         raise ClassifierSchemaError(f"Классификатор вернул неизвестную категорию: {category!r}")
-    return Classification(category=category, gist=gist)
+    # Нейтральной реплике сути не бывает: лишнюю отбрасываем, а не валим ответ (ADR 0016).
+    return Classification(category=category, gist=gist if category in GIST_CATEGORIES else "")
 
 
 def classify_with_retry(call: ModelCall, prompt: str) -> Classification:

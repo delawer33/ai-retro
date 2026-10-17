@@ -113,9 +113,9 @@ def test_group_of_two_episodes_is_not_a_pattern(engine: Engine) -> None:
         assert s.scalars(select(PatternRow)).all() == []
 
 
-def test_pattern_saved_and_only_correction_and_instruction_grouped(engine: Engine) -> None:
+def test_pattern_saved_and_only_episodes_with_gist_grouped(engine: Engine) -> None:
     rows = [(f"e{i}", f"c{i % 2}", "поправка", "не пиши X", f"text {i}") for i in range(3)]
-    rows.append(("q", "c9", "запрос", "сделай Y", "сделай Y"))
+    rows.append(("q", "c9", "запрос", "", "сделай Y"))
     seed(engine, rows)
     call = groups_call(("Не писать X", [0, 1, 2, 7, 0]))
     data = build_report(
@@ -128,7 +128,7 @@ def test_pattern_saved_and_only_correction_and_instruction_grouped(engine: Engin
         skills_dir=NO_SKILLS,
     )
     assert len(call.calls) == 1
-    assert "сделай Y" not in call.calls[0]
+    assert "3:" not in call.calls[0]
     (pattern,) = data.patterns
     assert (len(pattern.episodes), len(pattern.conversations)) == (3, 2)
     with Session(engine) as s:
@@ -162,6 +162,49 @@ def test_render_has_all_sections(engine: Engine) -> None:
     assert "беседа `c0`" in md
     assert "## Топ-10" in md
     assert "перепроверить:" in md
+
+
+def test_repeated_clarifications_become_pattern_with_composition(engine: Engine) -> None:
+    rows = [
+        (f"e{i}", f"c{i}", "запрос", "хочет схему, а не текст", f"схематично {i}") for i in range(3)
+    ] + [("n0", "c9", "запрос", "", "сделай вторую практическую")]
+    seed(engine, rows)
+    prop = proposal_call()
+    data = build_report(
+        engine,
+        groups_call(("Схема вместо текста", [0, 1, 2])),
+        prop,
+        since=None,
+        now=NOW,
+        classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
+    )
+    assert [len(p.episodes) for p in data.patterns] == [3]  # новый запрос без сути не попал
+    assert data.patterns[0].composition == {"запрос": 3}
+    md = render_report(data)
+    assert "- состав: 3 уточняющих запросов" in md
+    assert "всегда делай так" in prop.calls[0]
+
+
+def test_mixed_pattern_shows_composition_without_always_rule(engine: Engine) -> None:
+    rows = [
+        ("e0", "c0", "поправка", "не так", "нет"),
+        ("e1", "c1", "инструкция", "не так", "всегда"),
+        ("e2", "c2", "запрос", "не так", "ещё"),
+    ]
+    seed(engine, rows)
+    prop = proposal_call()
+    data = build_report(
+        engine,
+        groups_call(("Общее", [0, 1, 2])),
+        prop,
+        since=None,
+        now=NOW,
+        classifier_version=VERSION,
+        skills_dir=NO_SKILLS,
+    )
+    assert data.patterns[0].composition_text == "1 поправок, 1 инструкций, 1 уточняющих запросов"
+    assert "всегда делай так" not in prop.calls[0]
 
 
 def test_pastes_shown_as_marker() -> None:

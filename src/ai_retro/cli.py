@@ -109,9 +109,11 @@ def label_command(
         if relabel:
             items = pending_relabel_items(engine)
         else:
-            added = ensure_sample(engine, extend=extend)
-            if added:
-                typer.echo(f"В выборку добавлено эпизодов: {added}")
+            sample = ensure_sample(engine, extend=extend)
+            if sample.added:
+                typer.echo(f"В выборку добавлено эпизодов: {sample.added}")
+                if extend:
+                    typer.echo(f"Состав добавленного: {sample.composition()}")
             items = pending_items(engine)
             returned = returned_count(engine)
             if returned:

@@ -1,7 +1,7 @@
 """Эталон: стратифицированная выборка, разбиение dev/test, очередь разметки."""
 
 import hashlib
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -17,7 +17,7 @@ from ai_retro.db.models import (
     GoldSampleRow,
 )
 from ai_retro.errors import LabelExistsError
-from ai_retro.parsing.episodes import SIGNAL_SKILL
+from ai_retro.parsing.episodes import REWIND, SIGNAL_INTERRUPT, SIGNAL_REJECTION, SIGNAL_SKILL
 
 SAMPLE_SIZE = 100
 RELABEL_SIZE = 20
@@ -26,6 +26,10 @@ TEST_SHARE = 0.3
 # Доли страт: с признаками / модель сказала ненейтрально / модель сказала нейтрально.
 STRATA_SHARES = (0.4, 0.4, 0.2)
 NEUTRAL = "нейтрально"
+STRATUM_NAMES = ("с признаками", "ненейтрально по модели", "нейтрально по модели")
+# Внутри страты «с признаками» первыми берутся признаки, за которыми чаще идёт поправка
+# (ADR 0016); вызов скилла — последним: иначе он вытесняет поправки из эталона.
+SIGNAL_TIERS = ((SIGNAL_INTERRUPT, SIGNAL_REJECTION), (REWIND,), (SIGNAL_SKILL,))
 
 
 @dataclass(frozen=True)
@@ -33,8 +37,12 @@ class Candidate:
     uuid: str
     conversation_id: str
     project: str
-    has_signals: bool
+    signals: tuple[str, ...]
     model_category: str | None  # только для страты; на разметке не показывается
+
+    @property
+    def has_signals(self) -> bool:
+        return bool(self.signals)
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,23 @@ def _stratum(c: Candidate) -> int | None:
     if c.model_category is None:
         return None
     return 2 if c.model_category == NEUTRAL else 1
+
+
+def _signal_tier(c: Candidate) -> int:
+    """Ярус эпизода в страте «с признаками»: лучший из его признаков; незнакомый — последний."""
+    tiers = [i for i, names in enumerate(SIGNAL_TIERS) if any(s in names for s in c.signals)]
+    return min(tiers, default=len(SIGNAL_TIERS))
+
+
+def _pick_by_tier(
+    candidates: Sequence[Candidate], quota: int, per_conversation: dict[str, int]
+) -> list[Candidate]:
+    """Ярусы по очереди: следующий добирает остаток квоты после предыдущего."""
+    picked: list[Candidate] = []
+    for tier in range(len(SIGNAL_TIERS) + 1):
+        group = [c for c in candidates if _signal_tier(c) == tier]
+        picked += _pick(group, quota - len(picked), per_conversation)
+    return picked
 
 
 def _pick(
@@ -99,8 +124,9 @@ def draw_sample(
             strata[index].append(c)
     per_conversation: dict[str, int] = defaultdict(int, taken_per_conversation or {})
     picked: list[Candidate] = []
-    for stratum, share in zip(strata, STRATA_SHARES, strict=True):
-        picked += _pick(stratum, round(size * share), per_conversation)
+    for index, (stratum, share) in enumerate(zip(strata, STRATA_SHARES, strict=True)):
+        pick = _pick_by_tier if index == 0 else _pick
+        picked += pick(stratum, round(size * share), per_conversation)
     ranked = sorted(picked, key=lambda c: _order_key(c.uuid))
     test_uuids = {c.uuid for c in ranked[: round(len(ranked) * TEST_SHARE)]}
     return [(c, "test" if c.uuid in test_uuids else "dev") for c in picked]
@@ -114,20 +140,30 @@ def load_candidates(engine: Engine) -> list[Candidate]:
                 uuid=e.uuid,
                 conversation_id=e.conversation_id,
                 project=e.project,
-                has_signals=bool(e.signals),
+                signals=tuple(e.signals),
                 model_category=latest.get(e.uuid),
             )
             for e in session.scalars(select(EpisodeRow))
         ]
 
 
-def ensure_sample(engine: Engine, *, size: int = SAMPLE_SIZE, extend: bool = False) -> int:
-    """Сохраняет выборку, если её ещё нет (или при extend — добавляет новую). Возвращает, сколько
-    эпизодов добавлено."""
+@dataclass(frozen=True)
+class SampleResult:
+    """Сколько эпизодов добавлено в выборку и как они разошлись по стратам."""
+
+    added: int
+    by_stratum: tuple[int, int, int] = (0, 0, 0)
+
+    def composition(self) -> str:
+        return ", ".join(f"{n} {name}" for name, n in zip(STRATUM_NAMES, self.by_stratum))
+
+
+def ensure_sample(engine: Engine, *, size: int = SAMPLE_SIZE, extend: bool = False) -> SampleResult:
+    """Сохраняет выборку, если её ещё нет (или при extend — добавляет новую)."""
     with Session(engine) as session:
         sampled = list(session.scalars(select(GoldSampleRow.episode_uuid)))
         if sampled and not extend:
-            return 0
+            return SampleResult(0)
         sampled_set = set(sampled)
         candidates = [c for c in load_candidates(engine) if c.uuid not in sampled_set]
         taken: dict[str, int] = defaultdict(int)
@@ -139,7 +175,8 @@ def ensure_sample(engine: Engine, *, size: int = SAMPLE_SIZE, extend: bool = Fal
         for c, split in drawn:
             session.add(GoldSampleRow(episode_uuid=c.uuid, split=split))
         session.commit()
-        return len(drawn)
+        counts = Counter(_stratum(c) for c, _ in drawn)
+        return SampleResult(len(drawn), (counts[0], counts[1], counts[2]))
 
 
 def _item(episode: EpisodeRow) -> LabelItem:
