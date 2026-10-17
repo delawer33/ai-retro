@@ -5,6 +5,7 @@ TARGET_PROJECT = "project"
 TARGET_GLOBAL = "global"
 TARGET_SKILL = "skill"
 PROPOSED = "proposed"
+STALE = "stale"
 
 
 @dataclass(frozen=True)

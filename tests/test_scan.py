@@ -15,6 +15,7 @@ from ai_retro.db.models import (
     GoldLabelRow,
     GoldReturnedRow,
     GoldSampleRow,
+    PatternRow,
 )
 from ai_retro.errors import ModelCallError, ModelTimeoutError
 from ai_retro.scan.service import Review, ScanResult, parse_since, scan
@@ -317,6 +318,23 @@ def test_scan_review_removes_junk_with_classification(engine: Engine, logs_dir: 
         assert not s.scalars(
             select(ClassificationRow).where(ClassificationRow.episode_uuid == "junk")
         ).all()
+
+
+def test_scan_review_drops_removed_episodes_from_patterns(engine: Engine, logs_dir: Path) -> None:
+    with Session(engine) as s:
+        s.add(_stale("junk"))
+        s.add(
+            PatternRow(
+                gist="g",
+                episode_uuids=["junk", "other"],
+                created_at=datetime(2026, 9, 25, tzinfo=UTC),
+            )
+        )
+        s.commit()
+    _scan(engine, FakeModel(), logs_dir)
+    with Session(engine) as s:
+        (pattern,) = s.scalars(select(PatternRow)).all()
+        assert pattern.episode_uuids == ["other"]
 
 
 @pytest.mark.parametrize(

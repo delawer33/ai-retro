@@ -177,6 +177,7 @@ def report_command(
             now=now,
             classifier_version=classifier_version(settings.model),
             skills_dir=settings.skills_dir,
+            period=since,
         )
     except AiRetroError as exc:
         typer.echo(f"Ошибка: {exc}", err=True)

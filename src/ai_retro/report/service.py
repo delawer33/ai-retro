@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from sqlalchemy import Engine, delete, select
+from sqlalchemy import ColumnElement, Engine, and_, delete, or_, select
 from sqlalchemy.orm import Session
 
 from ai_retro.classify.service import CATEGORIES, LOOP_MARKER, latest_classifications
@@ -20,7 +20,7 @@ from ai_retro.errors import (
 from ai_retro.llm import ModelCall
 from ai_retro.parsing.skills import skill_exists
 from ai_retro.report.proposals import generate_proposal, render_proposal
-from ai_retro.report.schemas import GistItem, Pattern, Proposal, ReportData
+from ai_retro.report.schemas import PROPOSED, STALE, GistItem, Pattern, Proposal, ReportData
 from ai_retro.report.text import example_text
 
 PATTERN_CATEGORIES = ("поправка", "инструкция")
@@ -159,9 +159,11 @@ def group_gists(call: ModelCall, items: Sequence[GistItem]) -> list[Pattern]:
 
 
 def kept_proposals(engine: Engine) -> dict[frozenset[str], Proposal]:
-    """Предложения, уже лежащие в базе, по набору эпизодов паттерна."""
-    stmt = select(PatternRow, ProposalRow).join(
-        ProposalRow, ProposalRow.pattern_id == PatternRow.id
+    """Живые (не устаревшие) предложения в базе по набору эпизодов паттерна."""
+    stmt = (
+        select(PatternRow, ProposalRow)
+        .join(ProposalRow, ProposalRow.pattern_id == PatternRow.id)
+        .where(ProposalRow.status != STALE)
     )
     with Session(engine) as session:
         return {
@@ -176,23 +178,66 @@ def kept_proposals(engine: Engine) -> dict[frozenset[str], Proposal]:
         }
 
 
-def save_patterns(engine: Engine, patterns: Sequence[Pattern], *, now: datetime) -> None:
-    """Заменяет прежние паттерны без предложений; паттерн с предложением пишется со своим.
+def _same_report(period: str | None, classifier_version: str) -> ColumnElement[bool]:
+    """Паттерны того же отчёта: тот же период и версия; строки без ключа (до 0005) — тоже."""
+    same_period = PatternRow.period.is_(None) if period is None else PatternRow.period == period
+    return or_(
+        PatternRow.classifier_version.is_(None),
+        and_(PatternRow.classifier_version == classifier_version, same_period),
+    )
 
-    Паттерн, чей набор эпизодов уже лежит в базе с предложением, не дублируется.
+
+def save_patterns(
+    engine: Engine,
+    patterns: Sequence[Pattern],
+    *,
+    now: datetime,
+    period: str | None = None,
+    classifier_version: str = "",
+) -> None:
+    """Сохраняет паттерны отчёта и устаревает прежние `proposed` того же отчёта (ADR 0015).
+
+    Паттерны без предложений заменяются. `proposed` того же периода и версии, чьего набора
+    эпизодов в новом отчёте нет, получают `stale`; `applied` и `rejected` не трогаются.
+    Паттерн, чей набор эпизодов уже лежит в базе с живым предложением, не дублируется.
     """
+    fresh = {frozenset(e.uuid for e in p.episodes) for p in patterns}
     with Session(engine) as session:
-        proposed = select(ProposalRow.pattern_id)
-        session.execute(delete(PatternRow).where(PatternRow.id.not_in(proposed)))
+        has_proposal = select(ProposalRow.pattern_id)
+        session.execute(delete(PatternRow).where(PatternRow.id.not_in(has_proposal)))
+        open_stmt = (
+            select(PatternRow, ProposalRow)
+            .join(ProposalRow, ProposalRow.pattern_id == PatternRow.id)
+            .where(ProposalRow.status == PROPOSED, _same_report(period, classifier_version))
+            .order_by(ProposalRow.id)
+        )
+        kept: set[frozenset[str]] = set()
+        for pattern, proposal in session.execute(open_stmt):
+            uuids = frozenset(pattern.episode_uuids)
+            if uuids in fresh and uuids not in kept:
+                kept.add(uuids)
+            else:
+                proposal.status = STALE
+        session.flush()
         have = {
             frozenset(episode_uuids)
-            for episode_uuids in session.scalars(select(PatternRow.episode_uuids))
+            for episode_uuids in session.scalars(
+                select(PatternRow.episode_uuids)
+                .join(ProposalRow, ProposalRow.pattern_id == PatternRow.id)
+                .where(ProposalRow.status != STALE)
+            )
         }
         for p in patterns:
-            uuids = [e.uuid for e in p.episodes]
-            if frozenset(uuids) in have:
+            episode_uuids = [e.uuid for e in p.episodes]
+            if frozenset(episode_uuids) in have:
                 continue
-            row = PatternRow(gist=p.title, episode_uuids=uuids, created_at=now)
+            row = PatternRow(
+                gist=p.title,
+                episode_uuids=episode_uuids,
+                created_at=now,
+                period=period,
+                classifier_version=classifier_version,
+            )
             session.add(row)
             if p.proposal is not None:
                 session.flush()
@@ -231,6 +276,7 @@ def build_report(
     now: datetime,
     classifier_version: str,
     skills_dir: Path,
+    period: str | None = None,
 ) -> ReportData:
     items, distribution = load_report_data(
         engine, since=since, classifier_version=classifier_version, skills_dir=skills_dir
@@ -238,7 +284,7 @@ def build_report(
     patterns = with_proposals(
         engine, proposal_call, group_gists(call, items), skills_dir=skills_dir
     )
-    save_patterns(engine, patterns, now=now)
+    save_patterns(engine, patterns, now=now, period=period, classifier_version=classifier_version)
     return ReportData(since=since, distribution=distribution, patterns=tuple(patterns))
 
 
@@ -349,6 +395,7 @@ def run_report(
     now: datetime,
     classifier_version: str,
     skills_dir: Path,
+    period: str | None = None,
 ) -> ReportData:
     """Проверка пути, паттерны, отчёт. Неверный путь не стоит ни вызова модели, ни паттернов."""
     check_report_path(output)
@@ -360,6 +407,7 @@ def run_report(
         now=now,
         classifier_version=classifier_version,
         skills_dir=skills_dir,
+        period=period,
     )
     write_report(output, render_report(data))
     return data

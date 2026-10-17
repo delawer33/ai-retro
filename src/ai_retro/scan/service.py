@@ -19,6 +19,7 @@ from ai_retro.db.models import (
     GoldLabelRow,
     GoldReturnedRow,
     GoldSampleRow,
+    PatternRow,
 )
 from ai_retro.domain.service import OTHER, assign_domains, is_scratch
 from ai_retro.errors import InvalidSinceError, LogsDirNotFoundError
@@ -226,7 +227,15 @@ def review_stored(
     for table in (ClassificationRow, GoldLabelRow, GoldReturnedRow, GoldSampleRow):
         session.execute(delete(table).where(table.episode_uuid.in_(gone)))
     session.execute(delete(EpisodeRow).where(EpisodeRow.uuid.in_(gone)))
+    _drop_pattern_links(session, set(gone))
     return Review(removed=len(gone), updated=updated, removed_gold_labels=labels)
+
+
+def _drop_pattern_links(session: Session, gone: set[str]) -> None:
+    """Паттерны не ссылаются на удалённые эпизоды (ADR 0015)."""
+    for pattern in session.scalars(select(PatternRow)):
+        if gone.intersection(pattern.episode_uuids):
+            pattern.episode_uuids = [u for u in pattern.episode_uuids if u not in gone]
 
 
 def _episode_input(draft: EpisodeDraft) -> EpisodeInput:

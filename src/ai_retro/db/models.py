@@ -83,6 +83,9 @@ class PatternRow(Base):
     gist: Mapped[str] = mapped_column(Text)
     episode_uuids: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # отчёт, породивший паттерн (ADR 0015); NULL у строк до миграции 0005
+    period: Mapped[str | None] = mapped_column(String, nullable=True)  # --since как ввели
+    classifier_version: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ProposalRow(Base):
@@ -94,4 +97,6 @@ class ProposalRow(Base):
     section: Mapped[str] = mapped_column(String)
     text: Mapped[str] = mapped_column(Text)
     rationale: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String, default="proposed")  # proposed|applied|rejected
+    status: Mapped[str] = mapped_column(
+        String, default="proposed"
+    )  # proposed|applied|rejected|stale

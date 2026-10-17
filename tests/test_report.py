@@ -601,3 +601,74 @@ def test_report_counts_same_version_duplicate_once(engine: Engine) -> None:
     )
     assert sum(sum(by_cat.values()) for by_cat in distribution.values()) == 1
     assert [i.gist for i in items] == ["новая"]
+
+
+def _report(engine: Engine, groups: list[tuple[str, list[int]]], **kw: object) -> None:
+    build_report(
+        engine,
+        groups_call(*groups),
+        proposal_call(),
+        since=None,
+        now=NOW,
+        classifier_version=kw.pop("classifier_version", VERSION),  # type: ignore[arg-type]
+        skills_dir=NO_SKILLS,
+        **kw,  # type: ignore[arg-type]
+    )
+
+
+def _statuses(engine: Engine) -> list[str]:
+    with Session(engine) as s:
+        return sorted(s.scalars(select(ProposalRow.status)))
+
+
+def _seed_two_groups(engine: Engine) -> None:
+    seed(engine, [(f"e{i}", f"c{i % 2}", "поправка", "не пиши X", f"t{i}") for i in range(6)])
+
+
+def test_second_report_with_other_groups_makes_old_proposed_stale(engine: Engine) -> None:
+    _seed_two_groups(engine)
+    _report(engine, [("A", [0, 1, 2])])
+    _report(engine, [("B", [3, 4, 5])])
+    assert _statuses(engine) == ["proposed", "stale"]
+    _report(engine, [("B", [3, 4, 5])])
+    assert _statuses(engine) == ["proposed", "stale"]
+
+
+def test_stale_proposal_is_not_reused_when_pattern_returns(engine: Engine) -> None:
+    _seed_two_groups(engine)
+    _report(engine, [("A", [0, 1, 2])])
+    _report(engine, [("B", [3, 4, 5])])
+    _report(engine, [("A", [0, 1, 2])])
+    assert _statuses(engine) == ["proposed", "stale", "stale"]
+
+
+def test_applied_and_rejected_survive_new_report(engine: Engine) -> None:
+    _seed_two_groups(engine)
+    _report(engine, [("A", [0, 1, 2]), ("B", [3, 4, 5])])
+    with Session(engine) as s:
+        a, b = s.scalars(select(ProposalRow).order_by(ProposalRow.id))
+        a.status, b.status = "applied", "rejected"
+        s.commit()
+    _report(engine, [])
+    assert _statuses(engine) == ["applied", "rejected"]
+
+
+def test_other_period_or_version_keeps_proposed(engine: Engine) -> None:
+    _seed_two_groups(engine)
+    _report(engine, [("A", [0, 1, 2])], period="1w")
+    _report(engine, [("B", [3, 4, 5])], period="1d")
+    assert _statuses(engine) == ["proposed", "proposed"]
+    _report(engine, [], period="1d")
+    assert _statuses(engine) == ["proposed", "stale"]
+
+
+def test_legacy_pattern_without_report_key_goes_stale(engine: Engine) -> None:
+    _seed_two_groups(engine)
+    with Session(engine) as s:
+        row = PatternRow(gist="old", episode_uuids=["e0", "e1", "e2"], created_at=NOW)
+        s.add(row)
+        s.flush()
+        s.add(ProposalRow(pattern_id=row.id, target_file="f", section="s", text="t", rationale="r"))
+        s.commit()
+    _report(engine, [("B", [3, 4, 5])])
+    assert _statuses(engine) == ["proposed", "stale"]

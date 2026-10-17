@@ -11,6 +11,7 @@ from ai_retro.llm import ModelCall
 from ai_retro.parsing.skills import find_skill
 from ai_retro.report.schemas import (
     PROPOSED,
+    STALE,
     TARGET_GLOBAL,
     TARGET_PROJECT,
     TARGET_SKILL,
@@ -25,7 +26,7 @@ GLOBAL_CLAUDE_MD = "~/.claude/CLAUDE.md"
 PROMPT_EXAMPLES = 5
 PROMPT_TEXT_LIMIT = 300
 
-STATUS_LABEL = {PROPOSED: "предложено"}
+STATUS_LABEL = {PROPOSED: "предложено", STALE: "устарело"}
 KIND_EDIT = "edit"
 KIND_NEW_SKILL = "new_skill"
 
