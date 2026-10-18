@@ -24,7 +24,7 @@ from ai_retro.scan.service import scan
 from tests.conftest import NO_SKILLS, user_line
 
 HOME = Path("/home/u")
-RAW = "all/coll=учёба;all/projects=личные проекты;Documents/avito=работа"
+RAW = "work=работа;projects=личные проекты;study=учёба"
 
 
 def _log(logs: Path, name: str, cwd: str, text: str) -> None:
@@ -64,24 +64,24 @@ def _domains(engine: Engine) -> dict[str, str | None]:
 
 
 def test_rules_longest_prefix_and_boundary() -> None:
-    rules = parse_rules(RAW + ";all/projects/x=идеи", home=HOME)
-    assert domain_by_rules("/home/u/all/coll/!4c/js", rules) == "учёба"
-    assert domain_by_rules("/home/u/all/projects/x/sub", rules) == "идеи"
-    assert domain_by_rules("/home/u/all/projects", rules) == "личные проекты"
-    assert domain_by_rules("/home/u/all/projects-old", rules) is None
-    assert domain_by_rules("/home/u/Documents/sber", rules) is None
+    rules = parse_rules(RAW + ";projects/x=идеи", home=HOME)
+    assert domain_by_rules("/home/u/study/course/js", rules) == "учёба"
+    assert domain_by_rules("/home/u/projects/x/sub", rules) == "идеи"
+    assert domain_by_rules("/home/u/projects", rules) == "личные проекты"
+    assert domain_by_rules("/home/u/projects-old", rules) is None
+    assert domain_by_rules("/home/u/documents/misc", rules) is None
 
 
 def test_bad_rules() -> None:
     with pytest.raises(InvalidDomainRulesError):
-        parse_rules("all/coll=погода", home=HOME)
+        parse_rules("study=погода", home=HOME)
     with pytest.raises(InvalidDomainRulesError):
-        parse_rules("all/coll", home=HOME)
+        parse_rules("study", home=HOME)
 
 
 def test_is_scratch() -> None:
     assert is_scratch("/home/u/.config/Claude/scratch-workspaces/a/b/scratch-2026-09-05")
-    assert not is_scratch("/home/u/all/projects/x")
+    assert not is_scratch("/home/u/projects/x")
 
 
 def test_domain_by_model_rejects_bad_answer() -> None:
@@ -104,7 +104,7 @@ def test_domain_timeout_leaves_conversation_undecided(engine: Engine, tmp_path: 
 
 def test_scan_assigns_domains(engine: Engine, tmp_path: Path) -> None:
     logs = tmp_path / "logs"
-    _log(logs, "a", "/home/u/all/coll/js", "лекция")
+    _log(logs, "a", "/home/u/study/js", "лекция")
     _log(logs, "b", "/home/u/.config/Claude/scratch-workspaces/w1/w2/scratch-1", "о смысле")
     _log(logs, "c", "/tmp/elsewhere", "что-то")
     model = DomainModel()
@@ -128,7 +128,7 @@ def test_failed_model_answer_does_not_abort_scan_and_is_retried(
 ) -> None:
     logs = tmp_path / "logs"
     scratch = "/home/u/.config/Claude/scratch-workspaces/w1/w2/scratch-1"
-    _log(logs, "a", "/home/u/all/coll/js", "лекция")
+    _log(logs, "a", "/home/u/study/js", "лекция")
     _log(logs, "b", scratch, "о смысле")
     _scan(engine, logs, DomainModel("погода"))
     assert _domains(engine) == {"s-a": "учёба", "s-b": "иное"}
@@ -180,7 +180,7 @@ def test_failure_is_logged(
 
 def test_unrecognized_model_aborts_scan_before_writing(engine: Engine, tmp_path: Path) -> None:
     logs = tmp_path / "logs"
-    _log(logs, "a", "/home/u/all/coll/js", "лекция")
+    _log(logs, "a", "/home/u/study/js", "лекция")
     _log(logs, "b", SCRATCH, "о смысле")
 
     def bad(_: str) -> str:
@@ -203,7 +203,7 @@ def test_unrecognized_model_aborts_scan_before_writing(engine: Engine, tmp_path:
 
 def test_announce_precedes_first_domain_call_and_counts_it(engine: Engine, tmp_path: Path) -> None:
     logs = tmp_path / "logs"
-    _log(logs, "a", "/home/u/all/coll/js", "лекция")
+    _log(logs, "a", "/home/u/study/js", "лекция")
     _log(logs, "b", SCRATCH, "о смысле")
     events: list[str] = []
 
@@ -233,6 +233,6 @@ def test_announce_precedes_first_domain_call_and_counts_it(engine: Engine, tmp_p
 
 def test_tilde_in_rule_prefix_expands(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", "/home/u")
-    monkeypatch.setenv("AI_RETRO_DOMAIN_RULES", "~/notes=идеи;all/coll=учёба")
+    monkeypatch.setenv("AI_RETRO_DOMAIN_RULES", "~/notes=идеи;study=учёба")
     rules = parse_rules(Settings().domain_rules, home=Path("/elsewhere"))
-    assert rules == [(Path("/home/u/notes"), "идеи"), (Path("/elsewhere/all/coll"), "учёба")]
+    assert rules == [(Path("/home/u/notes"), "идеи"), (Path("/elsewhere/study"), "учёба")]

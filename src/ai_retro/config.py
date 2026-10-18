@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     threads: int = 3
     context_chars: int = 2000
 
-    domain_rules: str = "all/coll=учёба;all/projects=личные проекты;Documents/avito=работа"
+    domain_rules: str = "work=работа;projects=личные проекты;study=учёба"
     home: Path = Path.home()
     skills_dir: Path = Path.home() / ".claude" / "skills"
 
